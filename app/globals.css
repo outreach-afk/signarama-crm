@@ -1,26 +1,76 @@
-@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Signarama CRM — dark-only precision console */
+  --bg: #0F1117;
+  --surface: #161B27;
+  --surface-2: #1E2435;
+  --border: rgba(255,255,255,0.08);
+  --border-strong: rgba(255,255,255,0.15);
+  --text: #E6EDF3;
+  --text-secondary: #8B949E;
+  --text-muted: #484F58;
+  --primary: #3B82F6;
+  --primary-hover: #2563EB;
+  --primary-dim: rgba(59,130,246,0.12);
+  --success: #10B981;
+  --success-dim: rgba(16,185,129,0.12);
+  --warning: #F59E0B;
+  --warning-dim: rgba(245,158,11,0.12);
+  --danger: #EF4444;
+  --danger-dim: rgba(239,68,68,0.12);
+  --purple: #8B5CF6;
+  --purple-dim: rgba(139,92,246,0.12);
+
+  color-scheme: dark;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Bricolage Grotesque', sans-serif;
+  font-weight: 600;
+  line-height: 1.25;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* Stage chips */
+.stage-chip {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px; border-radius: 99px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.stage-new { background: rgba(148,163,184,0.12); color: #94A3B8; }
+.stage-contacted { background: var(--primary-dim); color: #60A5FA; }
+.stage-quoted { background: var(--purple-dim); color: #A78BFA; }
+.stage-negotiating { background: var(--warning-dim); color: #FCD34D; }
+.stage-won { background: var(--success-dim); color: #34D399; }
+.stage-completed { background: rgba(5,150,105,0.12); color: #059669; }
+.stage-lost { background: var(--danger-dim); color: #F87171; }
+
+/* Overdue row highlight */
+.row-overdue { background: rgba(239,68,68,0.06) !important; border-left: 3px solid var(--danger) !important; }
+.row-won { background: rgba(16,185,129,0.06) !important; border-left: 3px solid var(--success) !important; }
+
+@layer utilities {
+  .font-tabular { font-variant-numeric: tabular-nums; }
 }
