@@ -78,6 +78,7 @@ export default function DashboardClient() {
   const [quickSubject, setQuickSubject] = useState('')
   const [quickSending, setQuickSending] = useState(false)
   const [quickMsg, setQuickMsg] = useState('')
+  const [quickDrafting, setQuickDrafting] = useState(false)
 
   const openQuick = useCallback((lead: Lead, mode: 'sms' | 'email') => {
     setQuickLead(lead)
@@ -90,6 +91,25 @@ export default function DashboardClient() {
   const closeQuick = useCallback(() => {
     setQuickLead(null); setQuickMode(null)
   }, [])
+
+  async function draftQuick() {
+    if (!quickLead || !quickMode) return
+    setQuickDrafting(true)
+    try {
+      const res = await fetch('/api/ai/draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: quickMode, lead: quickLead }),
+      })
+      const data = await res.json()
+      if (data.draft) setQuickBody(data.draft)
+      else setQuickMsg('✗ Could not generate draft')
+    } catch {
+      setQuickMsg('✗ AI draft failed')
+    } finally {
+      setQuickDrafting(false)
+    }
+  }
 
   async function sendQuick() {
     if (!quickLead || !quickMode || !quickBody.trim()) return
@@ -251,7 +271,13 @@ export default function DashboardClient() {
                 </div>
               )}
               <div>
-                <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Message</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Message</label>
+                  <button onClick={draftQuick} disabled={quickDrafting}
+                    style={{ fontSize: 11, padding: '3px 10px', background: 'linear-gradient(135deg, #7C3AED, #4F46E5)', border: 'none', borderRadius: 5, color: '#fff', cursor: quickDrafting ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: quickDrafting ? 0.7 : 1 }}>
+                    {quickDrafting ? '✦ Drafting…' : '✦ Draft with AI'}
+                  </button>
+                </div>
                 <textarea value={quickBody} onChange={e => setQuickBody(e.target.value)} rows={4}
                   placeholder={quickMode === 'sms' ? 'Type your SMS…' : 'Type your email body…'}
                   style={{ width: '100%', padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 13, outline: 'none', resize: 'vertical' }} />

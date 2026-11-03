@@ -99,6 +99,7 @@ export default function LeadDetailClient() {
   const [modalSubject, setModalSubject] = useState('')
   const [modalSending, setModalSending] = useState(false)
   const [modalMsg, setModalMsg] = useState('')
+  const [modalDrafting, setModalDrafting] = useState(false)
 
   const openModal = useCallback((m: 'sms' | 'email' | 'note') => {
     setModal(m)
@@ -106,6 +107,25 @@ export default function LeadDetailClient() {
     setModalSubject(m === 'email' ? `Follow up — ${lead?.company || ''}`.trim() : '')
     setModalMsg('')
   }, [lead])
+
+  async function draftModal() {
+    if (!modal || modal === 'note' || !lead) return
+    setModalDrafting(true)
+    try {
+      const res = await fetch('/api/ai/draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: modal, lead }),
+      })
+      const data = await res.json()
+      if (data.draft) setModalBody(data.draft)
+      else setModalMsg('✗ Could not generate draft')
+    } catch {
+      setModalMsg('✗ AI draft failed')
+    } finally {
+      setModalDrafting(false)
+    }
+  }
 
   async function sendModal() {
     if (!modal || !modalBody.trim()) return
@@ -303,9 +323,17 @@ export default function LeadDetailClient() {
                 </div>
               )}
               <div>
-                <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  {modal === 'note' ? 'Note' : 'Message'}
-                </label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    {modal === 'note' ? 'Note' : 'Message'}
+                  </label>
+                  {modal !== 'note' && (
+                    <button onClick={draftModal} disabled={modalDrafting}
+                      style={{ fontSize: 11, padding: '3px 10px', background: 'linear-gradient(135deg, #7C3AED, #4F46E5)', border: 'none', borderRadius: 5, color: '#fff', cursor: modalDrafting ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: modalDrafting ? 0.7 : 1 }}>
+                      {modalDrafting ? '✦ Drafting…' : '✦ Draft with AI'}
+                    </button>
+                  )}
+                </div>
                 <textarea value={modalBody} onChange={e => setModalBody(e.target.value)} rows={5}
                   style={{ width: '100%', padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 13, outline: 'none', resize: 'vertical' }} />
               </div>
