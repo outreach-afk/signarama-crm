@@ -47,8 +47,8 @@ Do NOT include a subject line or greeting — just the body paragraphs. Output O
 
     if (!response.ok) {
       const err = await response.text()
-      console.error('Anthropic API error:', err)
-      return NextResponse.json({ error: 'AI service error' }, { status: 500 })
+      console.error('Anthropic API error:', response.status, err)
+      return NextResponse.json({ error: 'AI service error', detail: err, status: response.status }, { status: 500 })
     }
 
     const data = await response.json()
