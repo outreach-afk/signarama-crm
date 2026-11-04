@@ -3,7 +3,12 @@ import { createAdminClient } from '@/lib/supabase/server'
 
 export async function POST(req: NextRequest) {
   const { source } = await req.json().catch(() => ({ source: 'apollo' }))
-  const supabase = await createAdminClient()
+  let supabase: any
+  try {
+    supabase = await createAdminClient()
+  } catch (e: any) {
+    return NextResponse.json({ error: 'Supabase init failed', detail: e?.message ?? String(e) }, { status: 500 })
+  }
 
   if (source === 'apollo') {
     const apiKey = process.env.APOLLO_API_KEY
@@ -15,7 +20,11 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({ page: 1, per_page: 50 }),
     })
 
-    if (!res.ok) return NextResponse.json({ error: 'Apollo API error', status: res.status }, { status: 500 })
+    if (!res.ok) {
+      let errBody = ''
+      try { errBody = await res.text() } catch (_) {}
+      return NextResponse.json({ error: 'Apollo API error', status: res.status, detail: errBody }, { status: 500 })
+    }
     const data = await res.json()
     const contacts = data.contacts || []
 
@@ -40,8 +49,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (source === 'revscale') {
+    try {
     const apiKey = process.env.REVSCALE_API_KEY
-    const workspaceId = process.env.REVSCALE_WORKSPACE_ID || '68c859b73e538f39fb4ac009'
+    const workspaceId = process.env.REVSCALE_WORKSPACE_ID || process.env.REVSCALE_SPACE_ID || '68c859b73e538f39fb4ac009'
     if (!apiKey) return NextResponse.json({ error: 'REVSCALE_API_KEY not set' }, { status: 500 })
 
     let imported = 0
@@ -104,6 +114,9 @@ export async function POST(req: NextRequest) {
     } catch (_) { /* continue */ }
 
     return NextResponse.json({ imported, total })
+    } catch (e: any) {
+      return NextResponse.json({ error: 'Revscale sync error', detail: e?.message ?? String(e) }, { status: 500 })
+    }
   }
 
   return NextResponse.json({ error: 'Unknown source. Use apollo or revscale.' }, { status: 400 })
