@@ -58,19 +58,25 @@ export async function POST(req: NextRequest) {
     let total = 0
 
     // Sync lead_finder leads
+    let lfDebug: any = null
     try {
-      const lfRes = await fetch(`https://api.revscale.ai/v1/workspaces/${workspaceId}/leads?source=lead_finder`, {
+      const lfRes = await fetch(`https://api.revscale.ai/v1/companies/${workspaceId}/leads?source=lead_finder&per_page=100`, {
         headers: { Authorization: `Bearer ${apiKey}` },
       })
+      lfDebug = { status: lfRes.status, url: `https://api.revscale.ai/v1/companies/${workspaceId}/leads?source=lead_finder` }
+      if (!lfRes.ok) {
+        const errText = await lfRes.text().catch(() => '')
+        lfDebug.error = errText.substring(0, 300)
+      }
       if (lfRes.ok) {
         const lfData = await lfRes.json()
-        const lfLeads = lfData.leads || []
+        const lfLeads = lfData.items || lfData.leads || []
         total += lfLeads.length
         for (const l of lfLeads) {
           const { error } = await supabase.from('leads').upsert({
             revscale_id: l.id,
-            first_name: l.first_name,
-            last_name: l.last_name,
+            first_name: l.firstName ?? l.first_name,
+            last_name: l.lastName ?? l.last_name,
             email: l.email ?? null,
             phone: l.phone ?? null,
             company: l.company ?? null,
@@ -86,18 +92,18 @@ export async function POST(req: NextRequest) {
 
     // Sync email_campaign leads
     try {
-      const ecRes = await fetch(`https://api.revscale.ai/v1/workspaces/${workspaceId}/leads?source=email_campaign`, {
+      const ecRes = await fetch(`https://api.revscale.ai/v1/companies/${workspaceId}/leads?source=email_campaign&per_page=100`, {
         headers: { Authorization: `Bearer ${apiKey}` },
       })
       if (ecRes.ok) {
         const ecData = await ecRes.json()
-        const ecLeads = ecData.leads || []
+        const ecLeads = ecData.items || ecData.leads || []
         total += ecLeads.length
         for (const l of ecLeads) {
           const { error } = await supabase.from('leads').upsert({
             revscale_id: l.id ?? `ec_${l.email}`,
-            first_name: l.first_name,
-            last_name: l.last_name,
+            first_name: l.firstName ?? l.first_name,
+            last_name: l.lastName ?? l.last_name,
             email: l.email ?? null,
             phone: l.phone ?? null,
             company: l.company ?? null,
@@ -113,7 +119,7 @@ export async function POST(req: NextRequest) {
       }
     } catch (_) { /* continue */ }
 
-    return NextResponse.json({ imported, total })
+    return NextResponse.json({ imported, total, debug: lfDebug })
     } catch (e: any) {
       return NextResponse.json({ error: 'Revscale sync error', detail: e?.message ?? String(e) }, { status: 500 })
     }
