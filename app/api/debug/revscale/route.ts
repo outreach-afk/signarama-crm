@@ -7,9 +7,11 @@ export async function GET() {
   if (!apiKey) return NextResponse.json({ error: 'no key' })
 
   const baseUrls = [
-    `https://app.revscale.ai/api/v1/companies/${workspaceId}/leads?source=lead_finder&per_page=5`,
-    `https://app.revscale.ai/api/companies/${workspaceId}/leads?source=lead_finder&per_page=5`,
-    `https://app.revscale.ai/api/v1/workspaces/${workspaceId}/leads?source=lead_finder&per_page=5`,
+    `https://api.revscale.com/v1/companies/${workspaceId}/leads?source=lead_finder&per_page=5`,
+    `https://api.revscale.com/api/v1/companies/${workspaceId}/leads?source=lead_finder&per_page=5`,
+    `https://api.revscale.ai/v1/companies/${workspaceId}/leads?source=lead_finder&per_page=5`,
+    `https://revscale.com/api/v1/companies/${workspaceId}/leads?source=lead_finder&per_page=5`,
+    `https://app.revscale.com/api/v1/companies/${workspaceId}/leads?source=lead_finder&per_page=5`,
   ]
 
   const results: any[] = []
