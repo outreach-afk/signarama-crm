@@ -1,52 +1,47 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/server'
+import { adminDb, reconcileApollo, revscaleStatus, syncApollo } from '@/lib/sync'
 
+export const maxDuration = 60
+
+// Called by the Sync buttons (logged-in users only — the middleware guards this route).
 export async function POST(req: NextRequest) {
   const { source } = await req.json().catch(() => ({ source: 'apollo' }))
-  let supabase: any
+  const db = adminDb()
+
   try {
-    supabase = await createAdminClient()
-  } catch (e: any) {
-    return NextResponse.json({ error: 'Supabase init failed', detail: e?.message ?? String(e) }, { status: 500 })
-  }
-
-  if (source === 'apollo') {
-    const apiKey = process.env.APOLLO_API_KEY
-    if (!apiKey) return NextResponse.json({ error: 'APOLLO_API_KEY not set' }, { status: 500 })
-
-    const res = await fetch('https://api.apollo.io/api/v1/contacts/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
-      body: JSON.stringify({ page: 1, per_page: 50 }),
-    })
-
-    if (!res.ok) {
-      let errBody = ''
-      try { errBody = await res.text() } catch (_) {}
-      return NextResponse.json({ error: 'Apollo API error', status: res.status, detail: errBody }, { status: 500 })
-    }
-    const data = await res.json()
-    const contacts = data.contacts || []
-
-    let imported = 0
-    for (const c of contacts) {
-      const { error } = await supabase.from('leads').upsert({
-        apollo_id: c.id,
-        first_name: c.first_name,
-        last_name: c.last_name,
-        email: c.email,
-        phone: c.phone_numbers?.[0]?.sanitized_number ?? null,
-        company: c.organization?.name ?? null,
-        title: c.title ?? null,
-        source: 'apollo',
-        source_subtype: null,
-        intent_score: c.intent_score ?? null,
-      } as any, { onConflict: 'apollo_id', ignoreDuplicates: false })
-      if (!error) imported++
+    if (source === 'apollo') {
+      const r = await syncApollo(db)
+      if (!r.ok) return NextResponse.json(r, { status: 500 })
+      const apollo = await reconcileApollo(db)
+      return NextResponse.json({ ...r, matchedToRevscale: apollo.matched, possibleMatches: apollo.possible })
     }
 
-    return NextResponse.json({ imported, total: contacts.length })
-  }
+    if (source === 'revscale') {
+      // Revscale only exposes leads through its OAuth connector, which this server cannot call.
+      // Leads are pushed in automatically by the scheduled sync; here we refresh the
+      // Apollo attribution and report how fresh the data is.
+      const apollo = await reconcileApollo(db)
+      const status = await revscaleStatus(db)
+      return NextResponse.json({
+        mode: 'auto',
+        imported: status.total,
+        ...status,
+        matchedToApollo: apollo.matched,
+        message: 'Revscale leads sync automatically every hour.',
+      })
+    }
 
-  return NextResponse.json({ error: 'Unknown source. Use apollo.' }, { status: 400 })
+    return NextResponse.json({ error: `Unknown source "${source}". Use apollo or revscale.` }, { status: 400 })
+  } catch (e) {
+    return NextResponse.json({ error: 'Sync failed', detail: e instanceof Error ? e.message : String(e) }, { status: 500 })
+  }
+}
+
+// Freshness for the dashboard header.
+export async function GET() {
+  try {
+    return NextResponse.json(await revscaleStatus(adminDb()))
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
+  }
 }

@@ -1,79 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/server'
+import { adminDb, ingestRevscale, normalizeRevscale, reconcileApollo, revscaleStatus } from '@/lib/sync'
 
-// Secure ingest endpoint for leads pushed from external orchestrators (e.g. Claude scheduled task)
-// Requires INGEST_SECRET header to prevent unauthorized writes
+export const maxDuration = 60
+
+// Push endpoint for Revscale leads. Revscale has no server API we can call with a key,
+// so the scheduled Claude task reads leads through the Revscale connector and POSTs them here.
+// Auth: `x-ingest-secret` header (this route is exempt from the login middleware).
+//
+// Body: { leads: [...], channel?: 'web_pixel'|'inquiry'|'linkedin_outbound'|'lead_finder', action?: 'normalize' }
+//   Each lead: { id, firstName, lastName, email, phone, company, title, program, status,
+//                statusBadges, replied, sentiment, createdAt, inquiry }
+//   `program` ("Web Pixel" / "Outbound LinkedIn") decides the channel when `channel` is not given.
 export async function POST(req: NextRequest) {
   const secret = req.headers.get('x-ingest-secret')
   if (!secret || secret !== process.env.INGEST_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let body: any
+  try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
+
+  const db = adminDb()
   try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
-  }
-
-  const { leads, source, source_subtype } = body
-  if (!Array.isArray(leads) || leads.length === 0) {
-    return NextResponse.json({ error: 'leads must be a non-empty array' }, { status: 400 })
-  }
-
-  let supabase: any
-  try {
-    supabase = await createAdminClient()
-  } catch (e: any) {
-    return NextResponse.json({ error: 'Supabase init failed', detail: e?.message }, { status: 500 })
-  }
-
-  let imported = 0
-  let errors = 0
-
-  for (const lead of leads) {
-    const record: any = {
-      source: source || lead.source || 'revscale',
-      source_subtype: source_subtype || lead.source_subtype || null,
-      first_name: lead.firstName ?? lead.first_name ?? null,
-      last_name: lead.lastName ?? lead.last_name ?? null,
-      email: lead.email ?? null,
-      phone: lead.phone ?? null,
-      company: lead.company ?? null,
-      title: lead.title ?? null,
+    if (body.action === 'normalize') {
+      const normalized = await normalizeRevscale(db)
+      const apollo = normalized.remaining ? null : await reconcileApollo(db)
+      return NextResponse.json({ normalized, apollo })
+    }
+    if (body.action === 'status') {
+      return NextResponse.json(await revscaleStatus(db))
     }
 
-    if (lead.id) {
-      if (source === 'revscale' || record.source === 'revscale') {
-        record.revscale_id = lead.id
-      } else if (source === 'apollo' || record.source === 'apollo') {
-        record.apollo_id = lead.id
-      }
+    const leads = body.leads
+    if (!Array.isArray(leads) || leads.length === 0) {
+      return NextResponse.json({ error: 'leads must be a non-empty array' }, { status: 400 })
     }
-
-    if (lead.intent_score != null) record.intent_score = lead.intent_score
-    if (lead.notes) record.notes = lead.notes
-
-    // Determine conflict column
-    const conflictCol = record.revscale_id ? 'revscale_id' : record.apollo_id ? 'apollo_id' : null
-
-    if (conflictCol) {
-      const { error } = await supabase
-        .from('leads')
-        .upsert(record, { onConflict: conflictCol, ignoreDuplicates: false })
-      if (!error) imported++
-      else errors++
-    } else {
-      // No unique ID — insert only if email doesn't exist
-      if (record.email) {
-        const { error } = await supabase
-          .from('leads')
-          .upsert(record, { onConflict: 'email', ignoreDuplicates: true })
-        if (!error) imported++
-        else errors++
-      }
-    }
+    const result = await ingestRevscale(db, leads, body.channel ?? body.source_subtype ?? null)
+    const apollo = body.reconcile === false ? null : await reconcileApollo(db)
+    return NextResponse.json({ imported: result.inserted + result.updated, ...result, apollo })
+  } catch (e) {
+    return NextResponse.json({ error: 'Ingest failed', detail: e instanceof Error ? e.message : String(e) }, { status: 500 })
   }
-
-  return NextResponse.json({ imported, errors, total: leads.length })
 }

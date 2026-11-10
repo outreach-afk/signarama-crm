@@ -27,7 +27,10 @@ export default function SettingsClient() {
         body: JSON.stringify({ source }),
       })
       const data = await res.json()
-      setSyncMsg(m => ({ ...m, [source]: data.error ? `✗ ${data.error}` : `✓ Imported ${data.imported} of ${data.total} leads` }))
+      const ok = data.mode === 'auto'
+        ? `✓ ${data.total} Revscale leads · last synced ${data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : 'never'} · ${data.matchedToApollo} matched to Apollo`
+        : `✓ Synced ${data.imported} of ${data.total} contacts`
+      setSyncMsg(m => ({ ...m, [source]: data.error ? `✗ ${data.error}` : ok }))
     } catch {
       setSyncMsg(m => ({ ...m, [source]: '✗ Sync failed' }))
     } finally {
@@ -36,8 +39,8 @@ export default function SettingsClient() {
   }
 
   const integrations = [
-    { key: 'apollo', name: 'Apollo.io', desc: 'Lead enrichment + prospecting. Set APOLLO_API_KEY in your Vercel env vars.', icon: '🚀' },
-    { key: 'revscale', name: 'Revscale AI', desc: 'LinkedIn outbound + intent data. Set REVSCALE_API_KEY in env vars.', icon: '🎯' },
+    { key: 'apollo', name: 'Apollo.io', desc: 'Cold outreach contacts. Pulled on demand and once a day.', icon: '🚀' },
+    { key: 'revscale', name: 'Revscale AI', desc: 'Warm leads (Web Pixel + Inquiry). Pushed in automatically every hour; this button re-checks freshness and the Apollo match.', icon: '🎯' },
   ]
 
   const envStatus = [
@@ -73,7 +76,7 @@ export default function SettingsClient() {
               </div>
               <button onClick={() => triggerSync(key)} disabled={syncing === key}
                 style={{ padding: '7px 14px', background: 'var(--primary)', border: 'none', borderRadius: 7, color: '#fff', fontWeight: 600, fontSize: 12, cursor: syncing === key ? 'not-allowed' : 'pointer', flexShrink: 0, opacity: syncing === key ? 0.7 : 1 }}>
-                {syncing === key ? 'Syncing…' : 'Sync Now'}
+                {syncing === key ? 'Working…' : key === 'revscale' ? 'Check Now' : 'Sync Now'}
               </button>
             </div>
           ))}

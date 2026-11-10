@@ -21,12 +21,18 @@ export async function middleware(request: NextRequest) {
     }
   )
 
+  // Machine endpoints carry their own secret (x-ingest-secret / CRON_SECRET) and have no session.
+  const path = request.nextUrl.pathname
+  if (path === '/api/leads/ingest' || path.startsWith('/api/cron/')) return supabaseResponse
+
   const { data: { user } } = await supabase.auth.getUser()
 
   const isAuthPage = request.nextUrl.pathname.startsWith('/login') ||
     request.nextUrl.pathname.startsWith('/register')
 
   if (!user && !isAuthPage) {
+    // API callers get a JSON 401 instead of an HTML redirect to the login page.
+    if (path.startsWith('/api/')) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)

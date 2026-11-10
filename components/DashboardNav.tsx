@@ -1,19 +1,28 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 
-const NAV = [
+type Item = { href: string; label: string; icon: string; count?: keyof Counts; child?: boolean; section?: string }
+type Counts = { web_pixel: number; inquiry: number; apollo: number; warm: number }
+
+const NAV: Item[] = [
   { href: '/dashboard', label: 'Dashboard', icon: '⚡' },
-  { href: '/leads', label: 'Leads', icon: '👥' },
-  { href: '/settings', label: 'Settings', icon: '⚙️' },
+  { href: '/leads?view=revscale', label: 'Revscale Leads', icon: '🔥', count: 'warm', section: 'Lead sources' },
+  { href: '/leads?view=revscale&channel=web_pixel', label: 'Web Pixel', icon: '📡', count: 'web_pixel', child: true },
+  { href: '/leads?view=revscale&channel=inquiry', label: 'Inquiry', icon: '📨', count: 'inquiry', child: true },
+  { href: '/leads?view=apollo', label: 'Apollo Leads', icon: '🚀', count: 'apollo' },
+  { href: '/leads', label: 'All Leads', icon: '👥' },
+  { href: '/settings', label: 'Settings', icon: '⚙️', section: 'Workspace' },
 ]
 
 export default function DashboardNav() {
   const router = useRouter()
   const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const [counts, setCounts] = useState<Partial<Counts>>({})
   const [user, setUser] = useState<{ email?: string; full_name?: string } | null>(null)
 
   useEffect(() => {
@@ -23,6 +32,29 @@ export default function DashboardNav() {
       setUser({ email: data.user.email, full_name: data.user.user_metadata?.full_name })
     })
   }, [router])
+
+  useEffect(() => {
+    const supabase = createClient()
+    const n = (q: PromiseLike<{ count: number | null }>) => Promise.resolve(q).then(r => r.count ?? 0)
+    const head = () => supabase.from('leads').select('id', { count: 'exact', head: true })
+    const load = () => Promise.all([
+      n(head().eq('source', 'revscale').eq('source_subtype', 'web_pixel')),
+      n(head().eq('source', 'revscale').eq('source_subtype', 'inquiry')),
+      n(head().eq('source', 'apollo')),
+    ]).then(([web_pixel, inquiry, apollo]) => setCounts({ web_pixel, inquiry, apollo, warm: web_pixel + inquiry })).catch(() => {})
+    load()
+    const t = setInterval(load, 60_000)
+    return () => clearInterval(t)
+  }, [])
+
+  function isActive(href: string) {
+    const [path, query = ''] = href.split('?')
+    if (path !== '/leads') return pathname === path || pathname.startsWith(path + '/')
+    if (pathname !== '/leads') return href === '/leads' && pathname.startsWith('/leads/')
+    const want = new URLSearchParams(query)
+    return (searchParams.get('view') || '') === (want.get('view') || '') &&
+      (searchParams.get('channel') || '') === (want.get('channel') || '')
+  }
 
   async function handleLogout() {
     const supabase = createClient()
@@ -49,20 +81,29 @@ export default function DashboardNav() {
 
       {/* Nav */}
       <nav style={{ flex: 1, padding: '16px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {NAV.map(({ href, label, icon }) => {
-          const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
+        {NAV.map(({ href, label, icon, count, child, section }) => {
+          const active = isActive(href)
+          const n = count ? counts[count] : undefined
           return (
-            <Link key={href} href={href} style={{
-              display: 'flex', alignItems: 'center', gap: 10,
-              padding: '9px 12px', borderRadius: 8, textDecoration: 'none',
-              background: active ? 'var(--primary-dim)' : 'transparent',
-              color: active ? 'var(--primary)' : 'var(--text-secondary)',
-              fontSize: 14, fontWeight: active ? 600 : 400,
-              transition: 'all 0.15s',
-            }}>
-              <span style={{ fontSize: 16 }}>{icon}</span>
-              {label}
-            </Link>
+            <div key={href}>
+              {section && (
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)', opacity: 0.7, padding: '14px 12px 6px' }}>{section}</div>
+              )}
+              <Link href={href} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: child ? '7px 12px 7px 30px' : '9px 12px', borderRadius: 8, textDecoration: 'none',
+                background: active ? 'var(--primary-dim)' : 'transparent',
+                color: active ? 'var(--primary)' : 'var(--text-secondary)',
+                fontSize: child ? 13 : 14, fontWeight: active ? 600 : 400,
+                transition: 'all 0.15s',
+              }}>
+                <span style={{ fontSize: child ? 13 : 16 }}>{icon}</span>
+                <span style={{ flex: 1 }}>{label}</span>
+                {n !== undefined && (
+                  <span style={{ fontSize: 11, fontWeight: 700, fontVariantNumeric: 'tabular-nums', opacity: active ? 1 : 0.75 }}>{n.toLocaleString()}</span>
+                )}
+              </Link>
+            </div>
           )
         })}
       </nav>

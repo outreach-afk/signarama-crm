@@ -1,39 +1,20 @@
 import { NextResponse } from 'next/server'
+import { adminDb, reconcileApollo, syncApollo } from '@/lib/sync'
 
-// Called by Vercel Cron every 15 minutes
-// Cron secret protects this endpoint from public access
+export const maxDuration = 60
+
+// Vercel Cron (daily on the Hobby plan). Pulls Apollo and refreshes the Apollo → Revscale match.
+// Revscale itself is pushed into /api/leads/ingest by the scheduled Claude task.
 export async function GET(req: Request) {
   const authHeader = req.headers.get('authorization')
   if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'https://signarama-crm.vercel.app'
+  const db = adminDb()
   const results: Record<string, unknown> = {}
-
-  // Sync Revscale
-  try {
-    const r = await fetch(`${base}/api/leads/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'revscale' }),
-    })
-    results.revscale = await r.json()
-  } catch (e) {
-    results.revscale = { error: String(e) }
-  }
-
-  // Sync Apollo
-  try {
-    const r = await fetch(`${base}/api/leads/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: 'apollo' }),
-    })
-    results.apollo = await r.json()
-  } catch (e) {
-    results.apollo = { error: String(e) }
-  }
+  try { results.apollo = await syncApollo(db) } catch (e) { results.apollo = { error: String(e) } }
+  try { results.attribution = await reconcileApollo(db) } catch (e) { results.attribution = { error: String(e) } }
 
   return NextResponse.json({ ok: true, results, at: new Date().toISOString() })
 }

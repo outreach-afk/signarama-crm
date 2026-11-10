@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import type { Lead } from '@/types/database'
+import { CHANNELS, apolloMatch, fetchAllLeads, timeAgo } from '@/lib/leads'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -93,8 +94,10 @@ function StatCard({ label, value, accent, icon, sub }: {
 
 function SourceBadge({ source, subtype }: { source: string; subtype?: string | null }) {
   const map: Record<string, { label: string; color: string; icon: string }> = {
-    'revscale:lead_finder': { label: 'Revscale · Finder', color: '#8B5CF6', icon: '🔍' },
-    'revscale:email_campaign': { label: 'Revscale · Email', color: '#3B82F6', icon: '📧' },
+    'revscale:web_pixel': { label: 'Web Pixel', color: CHANNELS.web_pixel.color, icon: CHANNELS.web_pixel.icon },
+    'revscale:inquiry': { label: 'Inquiry', color: CHANNELS.inquiry.color, icon: CHANNELS.inquiry.icon },
+    'revscale:linkedin_outbound': { label: 'LinkedIn', color: CHANNELS.linkedin_outbound.color, icon: CHANNELS.linkedin_outbound.icon },
+    'revscale:lead_finder': { label: 'Finder', color: CHANNELS.lead_finder.color, icon: CHANNELS.lead_finder.icon },
     'revscale': { label: 'Revscale', color: '#6366F1', icon: '🤖' },
     'apollo': { label: 'Apollo', color: '#F59E0B', icon: '🚀' },
     'website': { label: 'Website', color: '#10B981', icon: '🌐' },
@@ -143,19 +146,21 @@ function PipelineFunnel({ leads }: { leads: Lead[] }) {
 function SourcePanel({ leads }: { leads: Lead[] }) {
   const bySource: Record<string, number> = {}
   for (const l of leads) {
-    const k = (l as any).source_subtype ? `${l.source}:${(l as any).source_subtype}` : l.source
+    const k = l.source_subtype ? `${l.source}:${l.source_subtype}` : l.source
     bySource[k] = (bySource[k] || 0) + 1
   }
   const total = leads.length || 1
   const entries = Object.entries(bySource).sort((a, b) => b[1] - a[1])
 
   const colors: Record<string, string> = {
-    'revscale:lead_finder': '#8B5CF6', 'revscale:email_campaign': '#3B82F6',
+    'revscale:web_pixel': CHANNELS.web_pixel.color, 'revscale:inquiry': CHANNELS.inquiry.color,
+    'revscale:linkedin_outbound': CHANNELS.linkedin_outbound.color, 'revscale:lead_finder': CHANNELS.lead_finder.color,
     revscale: '#6366F1', apollo: '#F59E0B', website: '#10B981',
     referral: '#EC4899', walk_in: '#14B8A6', other: '#64748B',
   }
   const labels: Record<string, string> = {
-    'revscale:lead_finder': 'Revscale Finder', 'revscale:email_campaign': 'Revscale Email',
+    'revscale:web_pixel': 'Revscale · Web Pixel', 'revscale:inquiry': 'Revscale · Inquiry',
+    'revscale:linkedin_outbound': 'Revscale · LinkedIn (cold)', 'revscale:lead_finder': 'Revscale · Lead Finder (cold)',
     revscale: 'Revscale', apollo: 'Apollo.io', website: 'Website',
     referral: 'Referral', walk_in: 'Walk-in', other: 'Other',
   }
@@ -194,12 +199,14 @@ export default function DashboardClient() {
 
   const { data: leads = [], refetch } = useQuery({
     queryKey: ['leads'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('leads').select('*').order('created_at', { ascending: false })
-      if (error) throw error
-      return data as Lead[]
-    },
+    queryFn: () => fetchAllLeads<Lead>(supabase),
+  })
+
+  // Revscale is pushed in by the scheduled sync, so show how fresh it is instead of a pull button.
+  const { data: rs, refetch: refetchRs } = useQuery({
+    queryKey: ['revscale-status'],
+    queryFn: async () => (await fetch('/api/leads/sync')).json() as Promise<{ lastSyncedAt?: string | null; newestWarmLeadAt?: string | null }>,
+    refetchInterval: 60_000,
   })
 
   useEffect(() => {
@@ -220,8 +227,10 @@ export default function DashboardClient() {
         body: JSON.stringify({ source: src }),
       })
       const d = await r.json()
-      setSyncMsg(r.ok ? `✓ ${src}: ${d.imported}/${d.total} imported` : `✗ ${d.error || 'Error'}`)
-      if (r.ok) refetch()
+      if (!r.ok) setSyncMsg(`✗ ${d.error || 'Error'}${d.detail ? ` — ${d.detail}` : ''}`)
+      else if (src === 'revscale') setSyncMsg(`✓ Revscale up to date · last synced ${timeAgo(d.lastSyncedAt)} · ${d.matchedToApollo} from Apollo outreach`)
+      else setSyncMsg(`✓ Apollo: ${d.imported} of ${d.total} contacts synced · ${d.matchedToRevscale} reached Revscale`)
+      if (r.ok) { refetch(); refetchRs() }
     } catch { setSyncMsg('✗ Network error') }
     finally { setSyncing(null) }
   }
@@ -232,13 +241,20 @@ export default function DashboardClient() {
   const pipeline = leads.reduce((s, l) => s + (l.deal_value || 0), 0)
   const won = leads.filter(l => ['won', 'completed'].includes(l.stage)).length
   const fromRevscale = leads.filter(l => l.source === 'revscale').length
+  const webPixel = leads.filter(l => l.source === 'revscale' && l.source_subtype === 'web_pixel').length
+  const inquiries = leads.filter(l => l.source === 'revscale' && l.source_subtype === 'inquiry').length
+  const apolloToRevscale = leads.filter(l => l.source === 'revscale' && apolloMatch(l) === 'yes').length
+  const [now] = useState(() => Date.now())
+  const warmThisWeek = leads.filter(l => l.source === 'revscale' && ['web_pixel', 'inquiry'].includes(l.source_subtype || '') && now - new Date(l.created_at).getTime() < 7 * 86_400_000).length
   const fromApollo = leads.filter(l => l.source === 'apollo').length
 
   const overdue = leads.filter(l =>
     l.next_step_due && new Date(l.next_step_due) < new Date() &&
     !['won', 'completed', 'lost'].includes(l.stage)
   )
-  const recent = leads.slice(0, 10)
+  // Lead with what matters: the newest warm leads, not whatever was imported last.
+  const warm = leads.filter(l => l.source === 'revscale' && ['web_pixel', 'inquiry'].includes(l.source_subtype || ''))
+  const recent = (warm.length ? warm : leads).slice(0, 10)
 
   // Quick compose
   const [quickLead, setQuickLead] = useState<Lead | null>(null)
@@ -284,8 +300,9 @@ export default function DashboardClient() {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           {syncMsg && <span style={{ fontSize: 12, color: syncMsg.startsWith('✓') ? '#10B981' : '#EF4444' }}>{syncMsg}</span>}
           <button onClick={() => runSync('revscale')} disabled={!!syncing}
+            title="Revscale leads arrive automatically every hour. Click to re-check freshness and the Apollo match."
             style={{ padding: '8px 14px', background: syncing === 'revscale' ? 'var(--surface-2)' : 'linear-gradient(135deg,#6366F1,#8B5CF6)', border: 'none', borderRadius: 8, color: '#fff', fontSize: 12, fontWeight: 700, cursor: syncing ? 'not-allowed' : 'pointer', opacity: syncing && syncing !== 'revscale' ? 0.5 : 1 }}>
-            {syncing === 'revscale' ? '⟳ Syncing…' : '↻ Revscale'}
+            {syncing === 'revscale' ? '⟳ Checking…' : `↻ Revscale · ${timeAgo(rs?.lastSyncedAt)}`}
           </button>
           <button onClick={() => runSync('apollo')} disabled={!!syncing}
             style={{ padding: '8px 14px', background: syncing === 'apollo' ? 'var(--surface-2)' : 'linear-gradient(135deg,#F59E0B,#EF4444)', border: 'none', borderRadius: 8, color: '#fff', fontSize: 12, fontWeight: 700, cursor: syncing ? 'not-allowed' : 'pointer', opacity: syncing && syncing !== 'apollo' ? 0.5 : 1 }}>
@@ -299,12 +316,22 @@ export default function DashboardClient() {
 
       {/* KPI row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12, marginBottom: 24 }}>
-        <StatCard label="Total Leads" value={total} accent="#6366F1" icon="👥" />
-        <StatCard label="Active" value={active} accent="#10B981" icon="⚡" sub={`${total ? Math.round((active / total) * 100) : 0}% of total`} />
-        <StatCard label="In Pipeline" value={pipeline} accent="#F59E0B" icon="💰" sub={fmt(pipeline)} />
-        <StatCard label="Won / Closed" value={won} accent="#34D399" icon="🏆" sub={`${total ? Math.round((won / total) * 100) : 0}% close rate`} />
-        <StatCard label="From Revscale" value={fromRevscale} accent="#8B5CF6" icon="🤖" />
-        <StatCard label="From Apollo" value={fromApollo} accent="#F59E0B" icon="🚀" />
+        <Link href="/leads?view=revscale&channel=web_pixel" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <StatCard label="Web Pixel" value={webPixel} accent={CHANNELS.web_pixel.color} icon="📡" sub="Identified website visitors" />
+        </Link>
+        <Link href="/leads?view=revscale&channel=inquiry" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <StatCard label="Inquiries" value={inquiries} accent={CHANNELS.inquiry.color} icon="📨" sub="Asked for a quote" />
+        </Link>
+        <Link href="/leads?view=revscale" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <StatCard label="Warm This Week" value={warmThisWeek} accent="#F59E0B" icon="🔥" sub="New pixel + inquiry leads, 7 days" />
+        </Link>
+        <Link href="/leads?view=revscale" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <StatCard label="Apollo → Revscale" value={apolloToRevscale} accent="#EC4899" icon="🔁" sub="Cold outreach that came back warm" />
+        </Link>
+        <Link href="/leads?view=apollo" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <StatCard label="Apollo Contacts" value={fromApollo} accent="#F59E0B" icon="🚀" sub="In cold outreach" />
+        </Link>
+        <StatCard label="Won / Closed" value={won} accent="#34D399" icon="🏆" sub={`${fmt(pipeline)} pipeline · ${active.toLocaleString()} active`} />
       </div>
 
       {/* Overdue alert */}
@@ -327,8 +354,8 @@ export default function DashboardClient() {
         {/* Recent leads */}
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
           <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>Recent Leads</span>
-            <Link href="/leads" style={{ fontSize: 12, color: 'var(--primary)', textDecoration: 'none' }}>View all →</Link>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>{warm.length ? 'Newest Warm Leads' : 'Recent Leads'}</span>
+            <Link href={warm.length ? '/leads?view=revscale' : '/leads'} style={{ fontSize: 12, color: 'var(--primary)', textDecoration: 'none' }}>View all →</Link>
           </div>
           <div>
             {recent.map(lead => (
@@ -339,7 +366,7 @@ export default function DashboardClient() {
                     {lead.company && `${lead.company} · `}{daysAgo(lead.created_at)}
                   </div>
                 </Link>
-                <SourceBadge source={lead.source} subtype={(lead as any).source_subtype} />
+                <SourceBadge source={lead.source} subtype={lead.source_subtype} />
                 <span style={{
                   fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 99, flexShrink: 0,
                   background: `${STAGE_COLORS[lead.stage] || '#64748B'}18`,

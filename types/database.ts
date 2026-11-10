@@ -13,6 +13,7 @@ export interface Lead {
   company: string | null
   title: string | null
   source: Source
+  source_subtype: string | null
   stage: Stage
   deal_value: number | null
   next_step: string | null
