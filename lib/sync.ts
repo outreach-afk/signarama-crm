@@ -46,7 +46,7 @@ function revscaleTags(lead: Row): string[] {
 }
 
 export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[], defaultChannel?: string | null) {
-  const result = { total: leads.length, inserted: 0, updated: 0, skipped: 0, errors: 0, firstError: null as string | null }
+  const result = { total: leads.length, inserted: 0, updated: 0, skipped: 0, errors: 0, firstError: null as string | null, newWarm: [] as string[], needDetails: [] as string[] }
   const fail = (msg: string) => { result.errors++; result.firstError ??= msg }
 
   const incoming = leads.filter(l => clean(l.id))
@@ -81,7 +81,11 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
     const inquiry = clean(lead.inquiry)
     const prior = existing.get(id)
 
+    // Inquiries arrive from the activity feed as id + email only; ask the caller for the rest.
+    if (channel === 'inquiry' && !fields.first_name && !clean(prior?.first_name)) result.needDetails.push(id)
+
     if (!prior) {
+      if (channel === 'web_pixel' || channel === 'inquiry') result.newWarm.push([fields.first_name, fields.last_name].filter(Boolean).join(' ') || email || id)
       const noteParts = [inquiry ? `Inquiry: ${inquiry}` : null, clean(lead.notes)].filter(Boolean)
       inserts.push({
         ...fields,
