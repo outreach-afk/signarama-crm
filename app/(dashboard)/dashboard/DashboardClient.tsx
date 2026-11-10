@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import type { Lead } from '@/types/database'
-import { CHANNELS, apolloMatch, fetchAllLeads, timeAgo } from '@/lib/leads'
+import { CHANNELS, apolloMatch, fetchAllLeads, runApolloSync, timeAgo } from '@/lib/leads'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -222,16 +222,20 @@ export default function DashboardClient() {
   async function runSync(src: 'apollo' | 'revscale') {
     setSyncing(src); setSyncMsg('')
     try {
-      const r = await fetch('/api/leads/sync', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source: src }),
-      })
-      const d = await r.json()
-      if (!r.ok) setSyncMsg(`✗ ${d.error || 'Error'}${d.detail ? ` — ${d.detail}` : ''}`)
-      else if (src === 'revscale') setSyncMsg(`✓ Revscale up to date · last synced ${timeAgo(d.lastSyncedAt)} · ${d.matchedToApollo} from Apollo outreach`)
-      else setSyncMsg(`✓ Apollo: ${d.imported} of ${d.total} contacts synced · ${d.matchedToRevscale} reached Revscale`)
-      if (r.ok) { refetch(); refetchRs() }
-    } catch { setSyncMsg('✗ Network error') }
+      if (src === 'apollo') {
+        const d = await runApolloSync(setSyncMsg)
+        setSyncMsg(`✓ Apollo: ${d.imported.toLocaleString()} contacts synced · ${d.matchedToRevscale ?? 0} reached Revscale`)
+      } else {
+        const r = await fetch('/api/leads/sync', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source: src }),
+        })
+        const d = await r.json()
+        if (!r.ok) throw new Error(d.error || 'Error')
+        setSyncMsg(`✓ Revscale up to date · last synced ${timeAgo(d.lastSyncedAt)} · ${d.matchedToApollo} from Apollo outreach`)
+      }
+      refetch(); refetchRs()
+    } catch (e) { setSyncMsg(`✗ ${e instanceof Error ? e.message : 'Network error'}`) }
     finally { setSyncing(null) }
   }
 
@@ -298,7 +302,7 @@ export default function DashboardClient() {
         </div>
         {/* Sync buttons */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {syncMsg && <span style={{ fontSize: 12, color: syncMsg.startsWith('✓') ? '#10B981' : '#EF4444' }}>{syncMsg}</span>}
+          {syncMsg && <span style={{ fontSize: 12, color: syncMsg.startsWith('✗') ? '#EF4444' : syncMsg.startsWith('✓') ? '#10B981' : 'var(--text-secondary)' }}>{syncMsg}</span>}
           <button onClick={() => runSync('revscale')} disabled={!!syncing}
             title="Revscale leads arrive automatically every hour. Click to re-check freshness and the Apollo match."
             style={{ padding: '8px 14px', background: syncing === 'revscale' ? 'var(--surface-2)' : 'linear-gradient(135deg,#6366F1,#8B5CF6)', border: 'none', borderRadius: 8, color: '#fff', fontSize: 12, fontWeight: 700, cursor: syncing ? 'not-allowed' : 'pointer', opacity: syncing && syncing !== 'revscale' ? 0.5 : 1 }}>

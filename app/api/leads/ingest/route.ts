@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { adminDb, ingestRevscale, normalizeRevscale, reconcileApollo, revscaleStatus } from '@/lib/sync'
+import { adminDb, ingestRevscale, normalizeRevscale, reconcileApollo, revscaleStatus, syncApollo } from '@/lib/sync'
 
 export const maxDuration = 60
 
@@ -27,6 +27,13 @@ export async function POST(req: NextRequest) {
       const normalized = await normalizeRevscale(db)
       const apollo = normalized.remaining ? null : await reconcileApollo(db)
       return NextResponse.json({ normalized, apollo })
+    }
+    if (body.action === 'apollo') {
+      const r = await syncApollo(db, { startPage: Number(body.page) || 1 })
+      return NextResponse.json(r.ok && r.complete ? { ...r, attribution: await reconcileApollo(db) } : r)
+    }
+    if (body.action === 'reconcile') {
+      return NextResponse.json(await reconcileApollo(db))
     }
     if (body.action === 'status') {
       return NextResponse.json(await revscaleStatus(db))

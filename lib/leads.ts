@@ -139,3 +139,23 @@ export async function fetchAllLeads<T = any>(supabase: any, columns = '*'): Prom
   }
   return out
 }
+
+/** Drive the paged Apollo sync from the browser until it reports `complete`. */
+export async function runApolloSync(onProgress?: (msg: string) => void) {
+  let page = 1, imported = 0
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let last: any = null
+  for (let guard = 0; guard < 60; guard++) {
+    const r = await fetch('/api/leads/sync', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: 'apollo', page }),
+    })
+    last = await r.json()
+    if (!r.ok) throw new Error(last.error ? `${last.error}${last.detail ? ` — ${last.detail}` : ''}` : 'Apollo sync failed')
+    imported += last.imported || 0
+    if (last.complete || !last.nextPage) break
+    page = last.nextPage
+    onProgress?.(`Apollo: ${imported.toLocaleString()} of ${(last.total || 0).toLocaleString()} contacts…`)
+  }
+  return { ...last, imported }
+}

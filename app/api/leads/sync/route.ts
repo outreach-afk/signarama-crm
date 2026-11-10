@@ -5,13 +5,15 @@ export const maxDuration = 60
 
 // Called by the Sync buttons (logged-in users only — the middleware guards this route).
 export async function POST(req: NextRequest) {
-  const { source } = await req.json().catch(() => ({ source: 'apollo' }))
+  const { source, page } = await req.json().catch(() => ({ source: 'apollo', page: 1 }))
   const db = adminDb()
 
   try {
     if (source === 'apollo') {
-      const r = await syncApollo(db)
+      // Large accounts take several calls: the client keeps calling with `nextPage` until `complete`.
+      const r = await syncApollo(db, { startPage: Number(page) || 1 })
       if (!r.ok) return NextResponse.json(r, { status: 500 })
+      if (!r.complete) return NextResponse.json(r)
       const apollo = await reconcileApollo(db)
       return NextResponse.json({ ...r, matchedToRevscale: apollo.matched, possibleMatches: apollo.possible })
     }

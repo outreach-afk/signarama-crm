@@ -115,12 +115,13 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
 
 // ── Apollo pull ──────────────────────────────────────────────────────────────
 
-export async function syncApollo(db: ReturnType<typeof adminDb>, budgetMs = 40_000) {
+export async function syncApollo(db: ReturnType<typeof adminDb>, opts: { startPage?: number; budgetMs?: number } = {}) {
+  const budgetMs = opts.budgetMs ?? 20_000
   const apiKey = process.env.APOLLO_API_KEY
   if (!apiKey) return { ok: false as const, error: 'APOLLO_API_KEY not set' }
 
   const started = Date.now()
-  let page = 1, totalPages = 1, total = 0, imported = 0, errors = 0
+  let page = Math.max(1, opts.startPage ?? 1), totalPages = page, total = 0, imported = 0, errors = 0
   let firstError: string | null = null
 
   while (page <= totalPages && Date.now() - started < budgetMs) {
@@ -168,7 +169,9 @@ export async function syncApollo(db: ReturnType<typeof adminDb>, budgetMs = 40_0
     }
     page++
   }
-  return { ok: true as const, imported, total, errors, firstError, complete: page > totalPages }
+  // Newest contacts come first, so even a partial run picks up everything recent.
+  const complete = page > totalPages
+  return { ok: true as const, imported, total, errors, firstError, complete, nextPage: complete ? null : page, totalPages }
 }
 
 // ── Apollo → Revscale attribution ────────────────────────────────────────────

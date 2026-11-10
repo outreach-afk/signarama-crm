@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { runApolloSync } from '@/lib/leads'
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '24px', marginBottom: 20 }}>
@@ -21,16 +22,16 @@ export default function SettingsClient() {
     setSyncing(source)
     setSyncMsg(m => ({ ...m, [source]: '' }))
     try {
-      const res = await fetch('/api/leads/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source }),
-      })
-      const data = await res.json()
-      const ok = data.mode === 'auto'
-        ? `✓ ${data.total} Revscale leads · last synced ${data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : 'never'} · ${data.matchedToApollo} matched to Apollo`
-        : `✓ Synced ${data.imported} of ${data.total} contacts`
-      setSyncMsg(m => ({ ...m, [source]: data.error ? `✗ ${data.error}` : ok }))
+      if (source === 'apollo') {
+        const d = await runApolloSync(msg => setSyncMsg(m => ({ ...m, apollo: msg })))
+        setSyncMsg(m => ({ ...m, apollo: `✓ Synced ${d.imported.toLocaleString()} contacts · ${d.matchedToRevscale ?? 0} reached Revscale` }))
+      } else {
+        const res = await fetch('/api/leads/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source }) })
+        const data = await res.json()
+        setSyncMsg(m => ({ ...m, [source]: data.error
+          ? `✗ ${data.error}`
+          : `✓ ${data.total} Revscale leads · last synced ${data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : 'never'} · ${data.matchedToApollo} matched to Apollo` }))
+      }
     } catch {
       setSyncMsg(m => ({ ...m, [source]: '✗ Sync failed' }))
     } finally {
@@ -71,7 +72,7 @@ export default function SettingsClient() {
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 3 }}>{name}</div>
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{desc}</div>
-                  {syncMsg[key] && <div style={{ fontSize: 12, marginTop: 4, color: syncMsg[key].startsWith('✓') ? 'var(--success)' : 'var(--danger)' }}>{syncMsg[key]}</div>}
+                  {syncMsg[key] && <div style={{ fontSize: 12, marginTop: 4, color: syncMsg[key].startsWith('✗') ? 'var(--danger)' : syncMsg[key].startsWith('✓') ? 'var(--success)' : 'var(--text-secondary)' }}>{syncMsg[key]}</div>}
                 </div>
               </div>
               <button onClick={() => triggerSync(key)} disabled={syncing === key}

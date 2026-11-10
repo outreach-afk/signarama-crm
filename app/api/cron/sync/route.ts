@@ -13,7 +13,7 @@ export async function GET(req: Request) {
 
   const db = adminDb()
   const results: Record<string, unknown> = {}
-  try { results.apollo = await syncApollo(db) } catch (e) { results.apollo = { error: String(e) } }
+  try { results.apollo = await syncApollo(db, { budgetMs: 25_000 }) } catch (e) { results.apollo = { error: String(e) } }
   try { results.attribution = await reconcileApollo(db) } catch (e) { results.attribution = { error: String(e) } }
 
   return NextResponse.json({ ok: true, results, at: new Date().toISOString() })
