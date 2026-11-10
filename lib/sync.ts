@@ -46,7 +46,7 @@ function revscaleTags(lead: Row): string[] {
 }
 
 export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[], defaultChannel?: string | null) {
-  const result = { total: leads.length, inserted: 0, updated: 0, skipped: 0, errors: 0, firstError: null as string | null, newWarm: [] as string[], needDetails: [] as string[] }
+  const result = { total: leads.length, inserted: 0, updated: 0, skipped: 0, errors: 0, firstError: null as string | null, newWarm: [] as Row[], needDetails: [] as string[] }
   const fail = (msg: string) => { result.errors++; result.firstError ??= msg }
 
   const incoming = leads.filter(l => clean(l.id))
@@ -85,7 +85,6 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
     if (channel === 'inquiry' && !fields.first_name && !clean(prior?.first_name)) result.needDetails.push(id)
 
     if (!prior) {
-      if (channel === 'web_pixel' || channel === 'inquiry') result.newWarm.push([fields.first_name, fields.last_name].filter(Boolean).join(' ') || email || id)
       const noteParts = [inquiry ? `Inquiry: ${inquiry}` : null, clean(lead.notes)].filter(Boolean)
       inserts.push({
         ...fields,
@@ -105,14 +104,33 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
     if (channel) patch.source_subtype = channel
     for (const [k, v] of Object.entries(fields)) if (v && !clean(prior[k])) patch[k] = v
     if (inquiry && !clean(prior.notes)) patch.notes = `Inquiry: ${inquiry}`
+    const detailsArrived = channel === 'inquiry' && fields.first_name && !clean(prior.first_name)
     const { error } = await db.from('leads').update(patch).eq('id', prior.id)
     if (error) fail(error.message); else result.updated++
+    if (!error && detailsArrived) {
+      result.newWarm.push({
+        name: [fields.first_name, fields.last_name].filter(Boolean).join(' '), channel, company: fields.company,
+        email: email || prior.email, phone: fields.phone, inquiry: inquiry ? inquiry.slice(0, 290) : null,
+        url: `https://signarama-crm.vercel.app/leads/${prior.id}`,
+      })
+    }
   }
 
   for (const batch of chunk(inserts, 200)) {
-    const { error } = await db.from('leads').insert(batch)
-    if (error) { result.errors += batch.length; result.firstError ??= error.message }
-    else result.inserted += batch.length
+    const { data, error } = await db.from('leads').insert(batch)
+      .select('id, first_name, last_name, email, phone, company, source_subtype, notes')
+    if (error) { result.errors += batch.length; result.firstError ??= error.message; continue }
+    result.inserted += batch.length
+    for (const r of data || []) {
+      if (r.source_subtype !== 'web_pixel' && r.source_subtype !== 'inquiry') continue
+      if (r.source_subtype === 'inquiry' && !r.first_name) continue // alerted once its details arrive
+      result.newWarm.push({
+        name: [r.first_name, r.last_name].filter(Boolean).join(' ') || r.email || 'Unknown',
+        channel: r.source_subtype, company: r.company, email: r.email, phone: r.phone,
+        inquiry: (r.notes || '').startsWith('Inquiry: ') ? r.notes.slice(9, 300) : null,
+        url: `https://signarama-crm.vercel.app/leads/${r.id}`,
+      })
+    }
   }
   return result
 }

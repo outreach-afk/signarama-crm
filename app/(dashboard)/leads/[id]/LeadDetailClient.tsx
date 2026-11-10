@@ -5,6 +5,8 @@ import { useParams, useRouter } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import type { Lead, Activity, Stage } from '@/types/database'
+import { apolloMatch, isMachineTag, revscaleSignals, sentiment } from '@/lib/leads'
+import { ChannelPill, Pill } from '@/components/LeadBits'
 
 const STAGES: Stage[] = ['new', 'contacted', 'quoted', 'negotiating', 'won', 'completed', 'lost']
 const STAGE_COLOR: Record<string, string> = {
@@ -198,6 +200,15 @@ export default function LeadDetailClient() {
                 {lead.stage}
               </span>
               {lead.deal_value && <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--warning)' }}>${lead.deal_value.toLocaleString()}</span>}
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
+              <ChannelPill lead={lead} />
+              {apolloMatch(lead) === 'yes' && <Pill color="#F59E0B" title="Matches a contact in Apollo cold outreach">🚀 From Apollo outreach</Pill>}
+              {apolloMatch(lead) === 'possible' && <Pill color="#94A3B8" title="Same name as an Apollo contact, different email">Possible Apollo match</Pill>}
+              {sentiment(lead) && <Pill color={sentiment(lead)!.tone === 'positive' ? '#34D399' : sentiment(lead)!.tone === 'negative' ? '#F87171' : '#FCD34D'}>↩ {sentiment(lead)!.label}</Pill>}
+              {revscaleSignals(lead).map(sig => <Pill key={sig} color="#64748B">{sig}</Pill>)}
+              {(lead.tags || []).filter(t => !isMachineTag(t)).map(t => <Pill key={t} color="#3B82F6">{t}</Pill>)}
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>· added {new Date(lead.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>

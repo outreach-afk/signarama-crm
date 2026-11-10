@@ -10,6 +10,9 @@ type Counts = { web_pixel: number; inquiry: number; apollo: number; warm: number
 
 const NAV: Item[] = [
   { href: '/dashboard', label: 'Dashboard', icon: '⚡' },
+  { href: '/today', label: 'Today', icon: '✅' },
+  { href: '/pipeline', label: 'Pipeline', icon: '🗂️' },
+  { href: '/reports', label: 'Reports', icon: '📈' },
   { href: '/leads?view=revscale', label: 'Revscale Leads', icon: '🔥', count: 'warm', section: 'Lead sources' },
   { href: '/leads?view=revscale&channel=web_pixel', label: 'Web Pixel', icon: '📡', count: 'web_pixel', child: true },
   { href: '/leads?view=revscale&channel=inquiry', label: 'Inquiry', icon: '📨', count: 'inquiry', child: true },
