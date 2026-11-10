@@ -247,7 +247,7 @@ export default function DashboardClient() {
   const fromRevscale = leads.filter(l => l.source === 'revscale').length
   const webPixel = leads.filter(l => l.source === 'revscale' && l.source_subtype === 'web_pixel').length
   const inquiries = leads.filter(l => l.source === 'revscale' && l.source_subtype === 'inquiry').length
-  const apolloToRevscale = leads.filter(l => l.source === 'revscale' && apolloMatch(l) === 'yes').length
+  const apolloToRevscale = leads.filter(l => l.source === 'revscale' && ['web_pixel', 'inquiry'].includes(l.source_subtype || '') && apolloMatch(l) === 'yes').length
   const [now] = useState(() => Date.now())
   const warmThisWeek = leads.filter(l => l.source === 'revscale' && ['web_pixel', 'inquiry'].includes(l.source_subtype || '') && now - new Date(l.created_at).getTime() < 7 * 86_400_000).length
   const fromApollo = leads.filter(l => l.source === 'apollo').length
@@ -330,7 +330,7 @@ export default function DashboardClient() {
           <StatCard label="Warm This Week" value={warmThisWeek} accent="#F59E0B" icon="🔥" sub="New pixel + inquiry leads, 7 days" />
         </Link>
         <Link href="/leads?view=revscale" style={{ textDecoration: 'none', color: 'inherit' }}>
-          <StatCard label="Apollo → Revscale" value={apolloToRevscale} accent="#EC4899" icon="🔁" sub="Cold outreach that came back warm" />
+          <StatCard label="Apollo → Warm" value={apolloToRevscale} accent="#EC4899" icon="🔁" sub="Cold outreach that came back warm" />
         </Link>
         <Link href="/leads?view=apollo" style={{ textDecoration: 'none', color: 'inherit' }}>
           <StatCard label="Apollo Contacts" value={fromApollo} accent="#F59E0B" icon="🚀" sub="In cold outreach" />
