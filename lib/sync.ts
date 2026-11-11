@@ -398,5 +398,22 @@ export async function dedupeWarm(db: ReturnType<typeof adminDb>, dryRun = false)
       if (del.error) errors++; else removed++
     }
   }
-  return { duplicateGroups: report.length, removed, errors, dryRun, sample: report.slice(0, 40) }
+  // Same person under two different emails (the pixel often resolves a personal address): report, never auto-merge.
+  const phone = (v: unknown) => { const d = String(v || '').replace(/\D/g, '').slice(-10); return d.length === 10 && !/^0+$/.test(d) ? d : '' }
+  const alt = new Map<string, Row[]>()
+  for (const r of data || []) {
+    const keys = [norm(r.first_name) && norm(r.last_name) ? `n:${norm(r.first_name)} ${norm(r.last_name)}` : '', phone(r.phone) ? `p:${phone(r.phone)}` : ''].filter(Boolean)
+    for (const k of keys) { const g = alt.get(k); if (g) g.push(r); else alt.set(k, [r]) }
+  }
+  const seen = new Set<string>()
+  const possible: Row[] = []
+  for (const [k, rows] of alt) {
+    const emails = new Set(rows.map(r => norm(r.email)))
+    if (rows.length < 2 || emails.size < 2) continue
+    const sig = rows.map(r => r.id).sort().join(',')
+    if (seen.has(sig)) continue
+    seen.add(sig)
+    possible.push({ by: k.startsWith('n:') ? 'name' : 'phone', name: [rows[0].first_name, rows[0].last_name].filter(Boolean).join(' '), ids: rows.map(r => r.id), channels: rows.map(r => r.source_subtype), dates: rows.map(r => r.created_at.slice(0, 10)), companies: rows.map(r => r.company) })
+  }
+  return { duplicateGroups: report.length, removed, errors, dryRun, sample: report.slice(0, 40), possible }
 }
