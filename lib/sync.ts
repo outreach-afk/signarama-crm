@@ -86,10 +86,22 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
   // One person, one lead: index the warm leads we hold by email so a visitor who is
   // identified by the pixel and then sends an inquiry (or the reverse) is merged, not duplicated.
   const byEmail = new Map<string, Row>()
+  const byName = new Map<string, Row>()
   {
     const { data } = await db.from('leads').select(`${SEL}, stage, created_at`)
       .eq('source', 'revscale').in('source_subtype', ['web_pixel', 'inquiry']).not('email', 'is', null).limit(5000)
-    for (const r of data || []) { const k = norm(r.email); if (k && !byEmail.has(k)) byEmail.set(k, r) }
+    for (const r of data || []) {
+      const k = norm(r.email); if (k && !byEmail.has(k)) byEmail.set(k, r)
+      const nk = norm(r.first_name) && norm(r.last_name) ? `${norm(r.first_name)} ${norm(r.last_name)}` : ''
+      if (nk && !byName.has(nk)) byName.set(nk, r)
+    }
+  }
+  /** Same full name, other warm channel, seen within 14 days: the same person under a second email. */
+  const nameTwin = (f: Row, channel: string | null, born: string | null) => {
+    const nk = norm(f.first_name) && norm(f.last_name) ? `${norm(f.first_name)} ${norm(f.last_name)}` : ''
+    const t = nk ? byName.get(nk) : null
+    if (!t || !t.id || !t.created_at || !born || t.source_subtype === channel) return null
+    return Math.abs(new Date(t.created_at).getTime() - new Date(born).getTime()) <= 14 * 86_400_000 ? t : null
   }
 
   const inserts: Row[] = []
@@ -115,14 +127,17 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
     if (channel === 'inquiry' && !fields.first_name && !clean(prior?.first_name)) result.needDetails.push(id)
 
     // Same person already in the CRM under another Revscale id → fold this record into that lead.
-    const twin = !prior && email && (channel === 'web_pixel' || channel === 'inquiry') ? byEmail.get(norm(email)) : null
+    const warmNew = !prior && (channel === 'web_pixel' || channel === 'inquiry')
+    const twin = warmNew ? (email && byEmail.get(norm(email))) || nameTwin(fields, channel, clean(lead.createdAt) || objectIdDate(id)) : null
     if (twin && !twin.id) { result.skipped++; continue } // same person twice in one batch; next sync merges it
     if (twin) {
       const born = clean(lead.createdAt) || objectIdDate(id)
       const m = mergedChannel(twin.source_subtype, channel, [...mergeRevscaleTags(twin.tags, tags), `rsid:${id}`], channel === 'inquiry' ? born : null)
       const patch: Row = { tags: m.tags, source_subtype: m.channel }
       for (const [k, v] of Object.entries(fields)) if (v && !clean(twin[k])) patch[k] = v
-      if (inquiry && !(twin.notes || '').includes(inquiry.slice(0, 40))) patch.notes = [`Inquiry: ${inquiry}`, clean(twin.notes)].filter(Boolean).join('\n\n')
+      const otherEmail = email && norm(email) !== norm(twin.email) ? `Other email: ${email}` : null
+      if (otherEmail && !(twin.notes || '').includes(otherEmail)) patch.notes = [clean(twin.notes), otherEmail].filter(Boolean).join('\n\n')
+      if (inquiry && !(twin.notes || '').includes(inquiry.slice(0, 40))) patch.notes = [`Inquiry: ${inquiry}`, clean(patch.notes ?? twin.notes)].filter(Boolean).join('\n\n')
       const { error } = await db.from('leads').update(patch).eq('id', twin.id)
       if (error) { fail(error.message); continue }
       result.merged++
@@ -362,6 +377,18 @@ export async function dedupeWarm(db: ReturnType<typeof adminDb>, dryRun = false)
   const groups = new Map<string, Row[]>()
   for (const r of data || []) { const k = norm(r.email); if (!k) continue; const g = groups.get(k); if (g) g.push(r); else groups.set(k, [r]) }
 
+  // Same full name, one pixel record and one inquiry within 14 days of each other, different emails:
+  // the pixel resolved a personal address and the form got the work one. Treat as one person.
+  const nameKey = (r: Row) => (norm(r.first_name) && norm(r.last_name) ? `${norm(r.first_name)} ${norm(r.last_name)}` : '')
+  const byName = new Map<string, Row[]>()
+  for (const r of data || []) { const k = nameKey(r); if (!k) continue; const g = byName.get(k); if (g) g.push(r); else byName.set(k, [r]) }
+  let n = 0
+  for (const rows of byName.values()) {
+    if (rows.length !== 2 || norm(rows[0].email) === norm(rows[1].email) || rows[0].source_subtype === rows[1].source_subtype) continue
+    if (Math.abs(new Date(rows[0].created_at).getTime() - new Date(rows[1].created_at).getTime()) > 14 * 86_400_000) continue
+    groups.set(`name:${n++}`, rows)
+  }
+
   const report: Row[] = []
   let removed = 0, errors = 0
   for (const rows of groups.values()) {
@@ -382,6 +409,7 @@ export async function dedupeWarm(db: ReturnType<typeof adminDb>, dryRun = false)
         if (d[k] && !keep[k] && !patch[k]) patch[k] = d[k]
       }
       if (clean(d.notes) && !notes.some(n => n && n.includes(d.notes.slice(0, 40)))) notes.unshift(d.notes)
+      if (d.email && norm(d.email) !== norm(keep.email)) notes.push(`Other email: ${d.email}`)
     }
     patch.tags = Array.from(new Set(tags)); patch.source_subtype = channel
     patch.notes = notes.filter(Boolean).join('\n\n') || null
