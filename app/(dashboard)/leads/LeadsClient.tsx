@@ -26,18 +26,18 @@ const VIEWS: Record<View, { title: string; blurb: string; tabs: Tab[] }> = {
     title: 'Revscale Leads',
     blurb: 'Warm leads from the website: identified visitors (Web Pixel) and people who sent an inquiry.',
     tabs: [
-      { key: 'warm', label: 'All warm', icon: '🔥', color: '#F59E0B', match: l => ['web_pixel', 'inquiry'].includes(l.source_subtype || '') },
-      { key: 'web_pixel', label: 'Web Pixel', icon: CHANNELS.web_pixel.icon, color: CHANNELS.web_pixel.color, hint: CHANNELS.web_pixel.hint, match: l => l.source_subtype === 'web_pixel' },
-      { key: 'inquiry', label: 'Inquiry', icon: CHANNELS.inquiry.icon, color: CHANNELS.inquiry.color, hint: CHANNELS.inquiry.hint, match: l => l.source_subtype === 'inquiry' },
-      { key: 'outbound', label: 'Cold outbound', icon: '❄️', color: '#8B5CF6', hint: 'LinkedIn outreach and Lead Finder prospects — not warm yet', match: l => !['web_pixel', 'inquiry'].includes(l.source_subtype || '') },
+      { key: 'warm', label: 'All warm', color: '#F59E0B', match: l => ['web_pixel', 'inquiry'].includes(l.source_subtype || '') },
+      { key: 'web_pixel', label: 'Web Pixel', color: CHANNELS.web_pixel.color, hint: CHANNELS.web_pixel.hint, match: l => l.source_subtype === 'web_pixel' },
+      { key: 'inquiry', label: 'Inquiry', color: CHANNELS.inquiry.color, hint: CHANNELS.inquiry.hint, match: l => l.source_subtype === 'inquiry' },
+      { key: 'outbound', label: 'Cold outbound', color: '#8B5CF6', hint: 'LinkedIn outreach and Lead Finder prospects — not warm yet', match: l => !['web_pixel', 'inquiry'].includes(l.source_subtype || '') },
     ],
   },
   apollo: {
     title: 'Apollo Leads',
     blurb: 'Contacts we cold-email from Apollo. "Reached Revscale" means they later showed up as a warm Revscale lead.',
     tabs: [
-      { key: 'all', label: 'All contacts', icon: '🚀', color: '#F59E0B', match: () => true },
-      { key: 'sequence', label: 'In a sequence', icon: '✉️', color: '#60A5FA', match: l => (l.tags || []).includes(TAG_IN_SEQUENCE) },
+      { key: 'all', label: 'All contacts', color: '#F59E0B', match: () => true },
+      { key: 'sequence', label: 'In a sequence', color: '#60A5FA', match: l => (l.tags || []).includes(TAG_IN_SEQUENCE) },
     ],
   },
   all: {
@@ -209,7 +209,7 @@ export default function LeadsClient() {
                   border: `1px solid ${active ? color : 'var(--border)'}`,
                   color: active ? color : 'var(--text-secondary)', fontSize: 13, fontWeight: 600,
                 }}>
-                {t.icon && <span>{t.icon}</span>}
+                <i style={{ width: 7, height: 7, borderRadius: 99, background: color }} />
                 {t.label}
                 <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 800, color: active ? color : 'var(--text)' }}>{count.toLocaleString()}</span>
               </button>
@@ -285,7 +285,7 @@ export default function LeadsClient() {
                     </td>
                   )}
                   <td style={{ padding: '12px 16px' }}>
-                    {match === 'yes' && <Pill color="#F59E0B" title={lead.source === 'apollo' ? 'This Apollo contact later appeared as a Revscale lead' : 'Matches an Apollo contact by email, or by name and company'}>🚀 {lead.source === 'apollo' ? 'Yes' : 'Apollo'}</Pill>}
+                    {match === 'yes' && <Pill color="#F59E0B" title={lead.source === 'apollo' ? 'This Apollo contact later appeared as a Revscale lead' : 'Matches an Apollo contact by email, or by name and company'}>{lead.source === 'apollo' ? 'Yes' : 'Apollo'}</Pill>}
                     {match === 'possible' && <Pill color="#94A3B8" title="Same full name as an Apollo contact, but a different email — check before counting it">Possible</Pill>}
                     {!match && <span style={{ color: 'var(--text-muted, #64748B)', fontSize: 13 }}>—</span>}
                   </td>

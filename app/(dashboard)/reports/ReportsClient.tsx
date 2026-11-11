@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import type { Lead } from '@/types/database'
-import { CHANNELS, apolloMatch } from '@/lib/leads'
+import { CHANNELS, alsoPixel, apolloMatch, inquiryAt } from '@/lib/leads'
 import { card, h1, hasTag, isWarm, sub, useLeads } from '@/components/LeadBits'
 
 const WEEK = 7 * 86_400_000
@@ -13,26 +13,52 @@ function weekStart(ms: number) { // Monday 00:00 local
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7))
   return d.getTime()
 }
-const label = (ms: number) => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+const dayLabel = (ms: number) => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+const monthLabel = (ms: number) => new Date(ms).toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
 
 export default function ReportsClient() {
   const { leads, isLoading } = useLeads()
   const [now] = useState(() => Date.now())
   const [copied, setCopied] = useState(false)
 
-  const weeks = useMemo(() => {
-    const first = weekStart(now) - (WEEKS - 1) * WEEK
-    const rows = Array.from({ length: WEEKS }, (_, i) => ({ start: first + i * WEEK, pixel: 0, inquiry: 0, apollo: 0, qualified: 0 }))
+  const [period, setPeriod] = useState<'week' | 'month'>('week')
+
+  // Buckets: 8 weeks (Monday start) or 12 calendar months. A person who was identified by the pixel
+  // and later sent an inquiry is one lead; it counts once as a pixel visitor (when first seen) and once as an inquiry (when it arrived).
+  const build = (kind: 'week' | 'month') => {
+    const n = kind === 'week' ? WEEKS : 12
+    const starts = Array.from({ length: n }, (_, i) => {
+      if (kind === 'week') return weekStart(now) - (n - 1 - i) * WEEK
+      const d = new Date(now); return new Date(d.getFullYear(), d.getMonth() - (n - 1 - i), 1).getTime()
+    })
+    const rows = starts.map(start => ({ start, pixel: 0, inquiry: 0, apollo: 0, qualified: 0 }))
+    const idx = (iso: string) => {
+      const t = new Date(iso).getTime()
+      if (kind === 'week') { const i = Math.floor((weekStart(t) - starts[0]) / WEEK); return i >= 0 && i < n ? i : -1 }
+      const d = new Date(t); return starts.indexOf(new Date(d.getFullYear(), d.getMonth(), 1).getTime())
+    }
     for (const l of leads) {
       if (!isWarm(l)) continue
-      const i = Math.floor((weekStart(new Date(l.created_at).getTime()) - first) / WEEK)
-      if (i < 0 || i >= WEEKS) continue
-      if (l.source_subtype === 'web_pixel') rows[i].pixel++; else rows[i].inquiry++
-      if (apolloMatch(l) === 'yes') rows[i].apollo++
-      if (hasTag(l, 'rs:qualified') || hasTag(l, 'rs:partially_qualified')) rows[i].qualified++
+      if (l.source_subtype === 'web_pixel' || alsoPixel(l)) { const i = idx(l.created_at); if (i >= 0) rows[i].pixel++ }
+      const at = inquiryAt(l)
+      if (at) {
+        const i = idx(at)
+        if (i >= 0) {
+          rows[i].inquiry++
+          if (hasTag(l, 'rs:qualified') || hasTag(l, 'rs:partially_qualified')) rows[i].qualified++
+        }
+      }
+      if (apolloMatch(l) === 'yes') { const i = idx(inquiryAt(l) || l.created_at); if (i >= 0) rows[i].apollo++ }
     }
     return rows
-  }, [leads, now])
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const weekRows = useMemo(() => build('week'), [leads, now])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const monthRows = useMemo(() => build('month'), [leads, now])
+  const weeks = period === 'week' ? weekRows : monthRows
+  const N = weeks.length
+  const unit = period === 'week' ? 'week' : 'month'
 
   const channels = useMemo(() => {
     const groups: { key: string; name: string; color: string; match: (l: Lead) => boolean }[] = [
@@ -51,17 +77,20 @@ export default function ReportsClient() {
     })
   }, [leads])
 
+  const label = period === 'week' ? dayLabel : monthLabel
   const max = Math.max(1, ...weeks.map(w => w.pixel + w.inquiry))
-  const cur = weeks[WEEKS - 1], prev = weeks[WEEKS - 2]
-  const delta = (a: number, b: number) => (a === b ? 'flat' : `${a > b ? '+' : ''}${a - b} vs last week`)
+  const cur = weeks[N - 1], prev = weeks[N - 2]
+  const wk = weekRows[WEEKS - 1], wkPrev = weekRows[WEEKS - 2], mo = monthRows[11], moPrev = monthRows[10]
+  const avgWeek = Math.round((weekRows.reduce((t, w) => t + w.inquiry, 0) / WEEKS) * 10) / 10
+  const delta = (a: number, b: number) => (a === b ? 'flat' : `${a > b ? '+' : ''}${a - b} vs last ${unit}`)
 
   const summary = [
-    `Signarama Corona — warm lead summary, week of ${label(cur.start)}`,
+    `Signarama Corona — warm lead summary, ${period === 'week' ? `week of ${label(cur.start)}` : new Date(cur.start).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`,
     `Web Pixel visitors identified: ${cur.pixel} (${delta(cur.pixel, prev.pixel)})`,
     `Inquiries received: ${cur.inquiry} (${delta(cur.inquiry, prev.inquiry)})`,
     `Warm leads that came from Apollo outreach: ${cur.apollo}`,
     `Inquiries qualified or partly qualified by Revscale: ${cur.qualified}`,
-    `Last ${WEEKS} weeks: ${weeks.reduce((t, w) => t + w.pixel, 0)} pixel, ${weeks.reduce((t, w) => t + w.inquiry, 0)} inquiries.`,
+    `Last ${N} ${unit}s: ${weeks.reduce((t, w) => t + w.pixel, 0)} pixel, ${weeks.reduce((t, w) => t + w.inquiry, 0)} inquiries.`,
   ].join('\n')
 
   async function copy() {
@@ -76,16 +105,40 @@ export default function ReportsClient() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
         <div>
           <h1 style={h1}>Reports</h1>
-          <p style={sub}>Warm leads per week and how each channel converts. Weeks start on Monday.{isLoading ? ' Loading…' : ''}</p>
+          <p style={sub}>Inquiries and website visitors per week and per month, and how each channel converts. Weeks start on Monday.{isLoading ? ' Loading…' : ''}</p>
         </div>
         <button onClick={copy} style={{ padding: '9px 16px', background: 'var(--primary)', border: 'none', borderRadius: 8, color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
-          {copied ? '✓ Copied' : 'Copy this week’s summary'}
+          {copied ? '✓ Copied' : `Copy this ${unit}’s summary`}
         </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14, marginBottom: 20 }}>
+        {[
+          { t: 'Inquiries this week', v: wk.inquiry, s: `${wkPrev.inquiry} last week` },
+          { t: 'Inquiries this month', v: mo.inquiry, s: `${moPrev.inquiry} last month` },
+          { t: 'Average per week', v: avgWeek, s: `over the last ${WEEKS} weeks` },
+          { t: 'Website visitors this month', v: mo.pixel, s: `${moPrev.pixel} last month` },
+        ].map(k => (
+          <div key={k.t} style={{ ...card, padding: '16px 18px' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{k.t}</div>
+            <div style={{ fontSize: 30, fontWeight: 800, fontVariantNumeric: 'tabular-nums', marginTop: 4 }}>{k.v}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{k.s}</div>
+          </div>
+        ))}
       </div>
 
       <div style={{ ...card, padding: '20px 24px', marginBottom: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, flexWrap: 'wrap', gap: 10 }}>
-          <span style={{ fontWeight: 700, fontSize: 15 }}>Warm leads per week</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontWeight: 700, fontSize: 15 }}>Warm leads per {unit}</span>
+            <span style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+              {(['week', 'month'] as const).map(p => (
+                <button key={p} onClick={() => setPeriod(p)} style={{ padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none', background: period === p ? 'var(--primary)' : 'transparent', color: period === p ? '#fff' : 'var(--text-secondary)' }}>
+                  {p === 'week' ? 'Weekly' : 'Monthly'}
+                </button>
+              ))}
+            </span>
+          </span>
           <span style={{ display: 'flex', gap: 14, fontSize: 12, color: 'var(--text-secondary)' }}>
             <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: CHANNELS.web_pixel.color, marginRight: 6 }} />Web Pixel</span>
             <span><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: CHANNELS.inquiry.color, marginRight: 6 }} />Inquiry</span>
@@ -111,12 +164,12 @@ export default function ReportsClient() {
       <div style={{ ...card, overflowX: 'auto', marginBottom: 20 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
           <thead><tr style={{ borderBottom: '1px solid var(--border)' }}>
-            <th style={{ ...th, textAlign: 'left' }}>Week of</th><th style={th}>Web Pixel</th><th style={th}>Inquiries</th><th style={th}>Total warm</th><th style={th}>From Apollo</th><th style={th}>Qualified</th>
+            <th style={{ ...th, textAlign: 'left' }}>{period === 'week' ? 'Week of' : 'Month'}</th><th style={th}>Web Pixel</th><th style={th}>Inquiries</th><th style={th}>Total warm</th><th style={th}>From Apollo</th><th style={th}>Qualified</th>
           </tr></thead>
           <tbody>
             {[...weeks].reverse().map((w, i) => (
               <tr key={w.start} style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ ...td, textAlign: 'left', fontWeight: i === 0 ? 700 : 400 }}>{label(w.start)}{i === 0 ? ' (this week)' : ''}</td>
+                <td style={{ ...td, textAlign: 'left', fontWeight: i === 0 ? 700 : 400 }}>{label(w.start)}{i === 0 ? ` (this ${unit})` : ''}</td>
                 <td style={td}>{w.pixel}</td><td style={td}>{w.inquiry}</td><td style={{ ...td, fontWeight: 700 }}>{w.pixel + w.inquiry}</td><td style={td}>{w.apollo}</td><td style={td}>{w.qualified}</td>
               </tr>
             ))}

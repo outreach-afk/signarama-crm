@@ -5,18 +5,21 @@
 @tailwind utilities;
 
 :root {
-  /* Signarama CRM — dark-only precision console */
-  --bg: #0F1117;
-  --surface: #161B27;
-  --surface-2: #1E2435;
-  --border: rgba(255,255,255,0.08);
-  --border-strong: rgba(255,255,255,0.15);
-  --text: #E6EDF3;
-  --text-secondary: #8B949E;
-  --text-muted: #484F58;
+  /* Layered dark UI: page < sidebar < card < raised. Depth comes from light, not from borders. */
+  --bg: #0B0E14;
+  --surface: #12161F;
+  --surface-2: #1A2030;
+  --card: linear-gradient(180deg, #151A25 0%, #121722 100%);
+  --border: rgba(255,255,255,0.07);
+  --border-strong: rgba(255,255,255,0.14);
+  --shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 1px 2px rgba(0,0,0,0.35), 0 12px 28px -18px rgba(0,0,0,0.75);
+  --shadow-raised: 0 1px 0 rgba(255,255,255,0.06) inset, 0 8px 22px -8px rgba(0,0,0,0.7), 0 28px 60px -30px rgba(0,0,0,0.9);
+  --text: #E8EDF4;
+  --text-secondary: #94A0B4;
+  --text-muted: #5A6577;
   --primary: #3B82F6;
   --primary-hover: #2563EB;
-  --primary-dim: rgba(59,130,246,0.12);
+  --primary-dim: rgba(59,130,246,0.14);
   --success: #10B981;
   --success-dim: rgba(16,185,129,0.12);
   --warning: #F59E0B;
@@ -32,7 +35,11 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
-  background: var(--bg);
+  background:
+    radial-gradient(1100px 520px at 78% -8%, rgba(59,130,246,0.09), transparent 62%),
+    radial-gradient(800px 420px at 12% 108%, rgba(16,185,129,0.05), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--text);
   font-family: 'Inter', system-ui, sans-serif;
   font-size: 14px;
@@ -74,3 +81,36 @@ h1, h2, h3, h4, h5, h6 {
 @layer utilities {
   .font-tabular { font-variant-numeric: tabular-nums; }
 }
+
+/* ── Interaction polish ─────────────────────────────────────────── */
+button, a, select, input, textarea { transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, transform .12s ease, filter .15s ease; font-family: inherit; }
+button:not(:disabled):hover { filter: brightness(1.12); }
+button:not(:disabled):active { transform: translateY(1px) scale(0.985); }
+button:disabled { opacity: .6; cursor: not-allowed; }
+:where(button, a, select, input, textarea):focus-visible { outline: 2px solid rgba(59,130,246,0.75); outline-offset: 2px; border-radius: 8px; }
+input:focus, textarea:focus, select:focus { border-color: rgba(59,130,246,0.6) !important; box-shadow: 0 0 0 3px rgba(59,130,246,0.14); }
+::selection { background: rgba(59,130,246,0.35); }
+table tbody tr { transition: background-color .12s ease; }
+kbd { font: 600 10.5px/1 'Inter', sans-serif; padding: 3px 6px; border-radius: 5px; color: var(--text-secondary); background: rgba(255,255,255,0.06); border: 1px solid var(--border); white-space: nowrap; }
+main > div { animation: page-in .22s ease both; }
+@keyframes page-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* ── Sidebar ───────────────────────────────────────────────────── */
+.sidebar { background: linear-gradient(180deg, #121722 0%, #0E121A 100%); border-right: 1px solid var(--border); }
+.logo-mark { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font: 800 17px 'Bricolage Grotesque', sans-serif; color: #fff;
+  background: linear-gradient(145deg, #60A5FA 0%, #2563EB 55%, #1D4ED8 100%); box-shadow: 0 1px 0 rgba(255,255,255,0.35) inset, 0 6px 14px -4px rgba(37,99,235,0.7); }
+.search-trigger { width: 100%; margin-top: 14px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 9px; cursor: pointer; font-size: 12.5px;
+  color: var(--text-secondary); background: rgba(255,255,255,0.035); border: 1px solid var(--border); }
+.nav-section { font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-muted); padding: 16px 12px 6px; }
+.nav-item { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 9px; text-decoration: none; font-size: 13.5px; color: var(--text-secondary); }
+.nav-item.child { padding: 6px 12px 6px 30px; font-size: 13px; }
+.nav-item:hover { background: rgba(255,255,255,0.045); color: var(--text); }
+.nav-item.active { color: #fff; font-weight: 600; background: linear-gradient(90deg, rgba(59,130,246,0.22), rgba(59,130,246,0.06)); box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset; }
+.nav-item.active::before { content: ''; position: absolute; left: -10px; top: 7px; bottom: 7px; width: 3px; border-radius: 0 3px 3px 0; background: var(--primary); box-shadow: 0 0 12px rgba(59,130,246,0.9); }
+.nav-count { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; padding: 1px 7px; border-radius: 99px; background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+.nav-item.active .nav-count { background: rgba(59,130,246,0.3); color: #fff; }
+.avatar { width: 32px; height: 32px; border-radius: 99px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; background: linear-gradient(145deg, #8B5CF6, #3B82F6); }
+.icon-btn { display: inline-flex; padding: 7px; border-radius: 8px; background: transparent; border: 1px solid transparent; color: var(--text-secondary); cursor: pointer; }
+.icon-btn:hover { background: rgba(255,255,255,0.06); border-color: var(--border); color: var(--text); }
+.palette { width: 620px; max-width: 92vw; border-radius: 16px; overflow: hidden; background: #141925; border: 1px solid var(--border-strong); box-shadow: var(--shadow-raised); animation: page-in .14s ease both; }

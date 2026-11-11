@@ -23,7 +23,7 @@ export async function middleware(request: NextRequest) {
 
   // Machine endpoints carry their own secret (x-ingest-secret / CRON_SECRET) and have no session.
   const path = request.nextUrl.pathname
-  if (path === '/api/leads/ingest' || path.startsWith('/api/cron/')) return supabaseResponse
+  if (path === '/api/leads/ingest' || path === '/api/calendar/feed' || path.startsWith('/api/cron/')) return supabaseResponse
 
   const { data: { user } } = await supabase.auth.getUser()
 

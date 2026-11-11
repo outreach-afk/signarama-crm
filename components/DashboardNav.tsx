@@ -4,21 +4,27 @@ import { useEffect, useState } from 'react'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import {
+  LayoutDashboard, ListChecks, CalendarDays, BookOpen, KanbanSquare, BarChart3, Flame, Radar, Inbox, Send, Users, Settings, Search, LogOut,
+  type LucideIcon,
+} from 'lucide-react'
 
-type Item = { href: string; label: string; icon: string; count?: keyof Counts; child?: boolean; section?: string }
+type Item = { href: string; label: string; icon: LucideIcon; count?: keyof Counts; child?: boolean; section?: string }
 type Counts = { web_pixel: number; inquiry: number; apollo: number; warm: number }
 
 const NAV: Item[] = [
-  { href: '/dashboard', label: 'Dashboard', icon: '⚡' },
-  { href: '/today', label: 'Today', icon: '✅' },
-  { href: '/pipeline', label: 'Pipeline', icon: '🗂️' },
-  { href: '/reports', label: 'Reports', icon: '📈' },
-  { href: '/leads?view=revscale', label: 'Revscale Leads', icon: '🔥', count: 'warm', section: 'Lead sources' },
-  { href: '/leads?view=revscale&channel=web_pixel', label: 'Web Pixel', icon: '📡', count: 'web_pixel', child: true },
-  { href: '/leads?view=revscale&channel=inquiry', label: 'Inquiry', icon: '📨', count: 'inquiry', child: true },
-  { href: '/leads?view=apollo', label: 'Apollo Leads', icon: '🚀', count: 'apollo' },
-  { href: '/leads', label: 'All Leads', icon: '👥' },
-  { href: '/settings', label: 'Settings', icon: '⚙️', section: 'Workspace' },
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/today', label: 'Today', icon: ListChecks, section: 'Follow-up' },
+  { href: '/calendar', label: 'Calendar', icon: CalendarDays },
+  { href: '/pipeline', label: 'Pipeline', icon: KanbanSquare },
+  { href: '/playbook', label: 'Playbook', icon: BookOpen },
+  { href: '/leads?view=revscale', label: 'Revscale Leads', icon: Flame, count: 'warm', section: 'Lead sources' },
+  { href: '/leads?view=revscale&channel=web_pixel', label: 'Web Pixel', icon: Radar, count: 'web_pixel', child: true },
+  { href: '/leads?view=revscale&channel=inquiry', label: 'Inquiry', icon: Inbox, count: 'inquiry', child: true },
+  { href: '/leads?view=apollo', label: 'Apollo Leads', icon: Send, count: 'apollo' },
+  { href: '/leads', label: 'All Leads', icon: Users },
+  { href: '/reports', label: 'Reports', icon: BarChart3, section: 'Workspace' },
+  { href: '/settings', label: 'Settings', icon: Settings },
 ]
 
 export default function DashboardNav() {
@@ -65,65 +71,50 @@ export default function DashboardNav() {
     router.push('/login')
   }
 
+  const initials = (user?.full_name || user?.email || '?').split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(x => x[0]?.toUpperCase()).join('')
+
   return (
-    <aside style={{
-      width: 220, background: 'var(--surface)', borderRight: '1px solid var(--border)',
-      display: 'flex', flexDirection: 'column', padding: '20px 0', flexShrink: 0,
+    <aside className="sidebar" style={{
+      width: 232, display: 'flex', flexDirection: 'column', flexShrink: 0,
       position: 'fixed', top: 0, left: 0, bottom: 0, zIndex: 50,
     }}>
-      {/* Logo */}
-      <div style={{ padding: '0 20px 24px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ padding: '18px 16px 14px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 34, height: 34, borderRadius: 8, background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>🏷️</div>
+          <div className="logo-mark">S</div>
           <div>
-            <div style={{ fontFamily: 'Bricolage Grotesque, sans-serif', fontWeight: 700, fontSize: 14 }}>Signarama</div>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Corona CRM</div>
+            <div style={{ fontFamily: 'Bricolage Grotesque, sans-serif', fontWeight: 700, fontSize: 14.5, letterSpacing: '-0.01em' }}>Signarama Corona</div>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Sales CRM</div>
           </div>
         </div>
+        <button className="search-trigger" onClick={() => window.dispatchEvent(new Event('open-command-palette'))}>
+          <Search size={14} /> <span style={{ flex: 1, textAlign: 'left' }}>Search leads…</span> <kbd>Ctrl K</kbd>
+        </button>
       </div>
 
-      {/* Nav */}
-      <nav style={{ flex: 1, padding: '16px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {NAV.map(({ href, label, icon, count, child, section }) => {
+      <nav style={{ flex: 1, padding: '0 10px 12px', display: 'flex', flexDirection: 'column', gap: 1, overflowY: 'auto' }}>
+        {NAV.map(({ href, label, icon: Icon, count, child, section }) => {
           const active = isActive(href)
           const n = count ? counts[count] : undefined
           return (
             <div key={href}>
-              {section && (
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-secondary)', opacity: 0.7, padding: '14px 12px 6px' }}>{section}</div>
-              )}
-              <Link href={href} style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: child ? '7px 12px 7px 30px' : '9px 12px', borderRadius: 8, textDecoration: 'none',
-                background: active ? 'var(--primary-dim)' : 'transparent',
-                color: active ? 'var(--primary)' : 'var(--text-secondary)',
-                fontSize: child ? 13 : 14, fontWeight: active ? 600 : 400,
-                transition: 'all 0.15s',
-              }}>
-                <span style={{ fontSize: child ? 13 : 16 }}>{icon}</span>
+              {section && <div className="nav-section">{section}</div>}
+              <Link href={href} className={`nav-item${active ? ' active' : ''}${child ? ' child' : ''}`}>
+                <Icon size={child ? 14 : 16} strokeWidth={active ? 2.2 : 1.8} />
                 <span style={{ flex: 1 }}>{label}</span>
-                {n !== undefined && (
-                  <span style={{ fontSize: 11, fontWeight: 700, fontVariantNumeric: 'tabular-nums', opacity: active ? 1 : 0.75 }}>{n.toLocaleString()}</span>
-                )}
+                {n !== undefined && <span className="nav-count">{n.toLocaleString()}</span>}
               </Link>
             </div>
           )
         })}
       </nav>
 
-      {/* User */}
-      <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>
-          {user?.full_name || user?.email?.split('@')[0] || '…'}
+      <div style={{ padding: '12px 14px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div className="avatar">{initials || '?'}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.full_name || user?.email?.split('@')[0] || '…'}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.email}</div>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 10 }}>{user?.email}</div>
-        <button onClick={handleLogout} style={{
-          width: '100%', padding: '7px', background: 'transparent',
-          border: '1px solid var(--border)', borderRadius: 7,
-          color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer',
-        }}>
-          Sign out
-        </button>
+        <button onClick={handleLogout} title="Sign out" className="icon-btn"><LogOut size={15} /></button>
       </div>
     </aside>
   )

@@ -6,19 +6,19 @@ export type Channel = 'web_pixel' | 'inquiry' | 'linkedin_outbound' | 'lead_find
 
 export const CHANNELS: Record<Channel, { label: string; short: string; color: string; icon: string; warm: boolean; hint: string }> = {
   web_pixel: {
-    label: 'Web Pixel', short: 'Pixel', color: '#3B82F6', icon: '📡', warm: true,
+    label: 'Web Pixel', short: 'Pixel', color: '#3B82F6', icon: '●', warm: true,
     hint: 'Visitor identified on the website by the Revscale pixel',
   },
   inquiry: {
-    label: 'Inquiry', short: 'Inquiry', color: '#10B981', icon: '📨', warm: true,
+    label: 'Inquiry', short: 'Inquiry', color: '#10B981', icon: '●', warm: true,
     hint: 'Submitted an inquiry / quote request (Revscale Inquiry Qualifier)',
   },
   linkedin_outbound: {
-    label: 'LinkedIn Outbound', short: 'LinkedIn', color: '#8B5CF6', icon: '💼', warm: false,
+    label: 'LinkedIn Outbound', short: 'LinkedIn', color: '#8B5CF6', icon: '●', warm: false,
     hint: 'Cold LinkedIn outreach run through Revscale',
   },
   lead_finder: {
-    label: 'Lead Finder', short: 'Finder', color: '#64748B', icon: '🔍', warm: false,
+    label: 'Lead Finder', short: 'Finder', color: '#64748B', icon: '●', warm: false,
     hint: 'Prospect sourced by Revscale Lead Finder, not yet engaged',
   },
 }
@@ -30,10 +30,11 @@ export const TAG_APOLLO = 'apollo_outreach'          // matched an Apollo contac
 export const TAG_APOLLO_POSSIBLE = 'apollo_possible' // matched an Apollo contact by full name only
 export const TAG_IN_SEQUENCE = 'apollo_sequence'     // Apollo contact enrolled in a sequence
 const MACHINE_PREFIXES = ['rs:', 'sentiment:']
+const HIDDEN_PREFIXES = ['rsid:', 'also:', 'inquiry_at:', 'enriched']
 const MACHINE_TAGS = [TAG_APOLLO, TAG_APOLLO_POSSIBLE, TAG_IN_SEQUENCE]
 
 export function isMachineTag(t: string) {
-  return MACHINE_TAGS.includes(t) || MACHINE_PREFIXES.some(p => t.startsWith(p))
+  return MACHINE_TAGS.includes(t) || [...MACHINE_PREFIXES, ...HIDDEN_PREFIXES].some(p => t.startsWith(p))
 }
 
 /** Keep the user's own tags and replace the Revscale-derived ones (`rs:` / `sentiment:`). */
@@ -158,4 +159,14 @@ export async function runApolloSync(onProgress?: (msg: string) => void) {
     onProgress?.(`Apollo: ${imported.toLocaleString()} of ${(last.total || 0).toLocaleString()} contacts…`)
   }
   return { ...last, imported }
+}
+
+/** True when the same person was first identified by the pixel and also sent an inquiry. */
+export const alsoPixel = (l: LeadLike) => (l.tags || []).includes('also:web_pixel')
+
+/** When the inquiry arrived. A merged lead keeps its first-seen date in created_at, so the inquiry date lives in a tag. */
+export function inquiryAt(l: LeadLike & { created_at: string }): string | null {
+  if (l.source_subtype !== 'inquiry') return null
+  const t = (l.tags || []).find(x => x.startsWith('inquiry_at:'))
+  return t ? `${t.slice(11)}T12:00:00Z` : l.created_at
 }

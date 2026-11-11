@@ -69,9 +69,11 @@ function StatCard({ label, value, accent, icon, sub }: {
   const display = useCounter(value)
   return (
     <div style={{
-      background: 'var(--surface)',
-      border: `1px solid ${accent}33`,
+      background: 'var(--card)',
+      border: '1px solid var(--border)',
+      boxShadow: 'var(--shadow)',
       borderRadius: 14,
+      height: '100%',
       padding: '20px 22px 18px',
       position: 'relative',
       overflow: 'hidden',
@@ -82,7 +84,7 @@ function StatCard({ label, value, accent, icon, sub }: {
       }} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>{label}</span>
-        <span style={{ fontSize: 18, opacity: 0.7 }}>{icon}</span>
+        <span style={{ width: 8, height: 8, borderRadius: 99, background: accent, boxShadow: `0 0 10px ${accent}`, marginTop: 3 }} title={icon} />
       </div>
       <div style={{ fontSize: 36, fontWeight: 800, color: accent, fontVariantNumeric: 'tabular-nums', lineHeight: 1, marginBottom: 4 }}>
         {display.toLocaleString()}
@@ -99,7 +101,7 @@ function SourceBadge({ source, subtype }: { source: string; subtype?: string | n
     'revscale:linkedin_outbound': { label: 'LinkedIn', color: CHANNELS.linkedin_outbound.color, icon: CHANNELS.linkedin_outbound.icon },
     'revscale:lead_finder': { label: 'Finder', color: CHANNELS.lead_finder.color, icon: CHANNELS.lead_finder.icon },
     'revscale': { label: 'Revscale', color: '#6366F1', icon: '🤖' },
-    'apollo': { label: 'Apollo', color: '#F59E0B', icon: '🚀' },
+    'apollo': { label: 'Apollo', color: '#F59E0B', icon: '●' },
     'website': { label: 'Website', color: '#10B981', icon: '🌐' },
     'referral': { label: 'Referral', color: '#EC4899', icon: '🤝' },
     'walk_in': { label: 'Walk-in', color: '#14B8A6', icon: '🏪' },

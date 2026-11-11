@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { runApolloSync } from '@/lib/leads'
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
@@ -84,6 +84,10 @@ export default function SettingsClient() {
         </div>
       </Section>
 
+      <Section title="Follow-ups in your own calendar">
+        <CalendarFeed />
+      </Section>
+
       <Section title="Environment Variables">
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.6 }}>
           Configure these in your Vercel project settings under <strong>Environment Variables</strong>, or in <code style={{ background: 'var(--surface-2)', padding: '1px 5px', borderRadius: 4, fontSize: 12 }}>.env.local</code> for local development. See <code>.env.local.example</code> for the full list.
@@ -113,6 +117,27 @@ export default function SettingsClient() {
           <p style={{ marginTop: 10 }}>To get a refresh token: use Google OAuth Playground at <a href="https://developers.google.com/oauthplayground" target="_blank" rel="noopener" style={{ color: 'var(--primary)' }}>developers.google.com/oauthplayground</a> with the Gmail Send scope.</p>
         </div>
       </Section>
+    </div>
+  )
+}
+
+function CalendarFeed() {
+  const [url, setUrl] = useState('')
+  const [copied, setCopied] = useState(false)
+  useEffect(() => { fetch('/api/calendar/link').then(r => r.json()).then(d => setUrl(d.url || '')).catch(() => {}) }, [])
+  async function copy() { try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { /* select the text instead */ } }
+  return (
+    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+      <p style={{ marginBottom: 12 }}>
+        Subscribe to this address in Google Calendar (Other calendars → From URL) or Outlook (Add calendar → Subscribe from web).
+        Each day gets one entry listing the follow-ups due, with phone numbers. Google refreshes subscribed calendars a few times a day, so use the Today page for the live list.
+        Anyone with this address can read the list, so share it only with the team.
+      </p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input readOnly value={url || 'Loading…'} onFocus={e => e.currentTarget.select()}
+          style={{ flex: 1, padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 12, outline: 'none' }} />
+        <button onClick={copy} disabled={!url} style={{ padding: '7px 14px', background: 'var(--primary)', border: 'none', borderRadius: 7, color: '#fff', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>{copied ? '✓ Copied' : 'Copy'}</button>
+      </div>
     </div>
   )
 }

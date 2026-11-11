@@ -1,4 +1,5 @@
 // Server-side sync helpers shared by /api/leads/ingest, /api/leads/sync and the cron.
+import { createHash } from 'crypto'
 import { createClient as createSupabase } from '@supabase/supabase-js'
 import {
   TAG_APOLLO, TAG_APOLLO_POSSIBLE, TAG_IN_SEQUENCE, channelFor, fetchAllLeads,
@@ -15,6 +16,11 @@ export function adminDb() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { persistSession: false, autoRefreshToken: false } },
   )
+}
+
+/** Private key for the calendar feed address, derived from a server secret. */
+export function calendarToken() {
+  return createHash('sha256').update(`${process.env.INGEST_SECRET || 'unset'}:calendar-feed`).digest('hex').slice(0, 32)
 }
 
 const clean = (v: unknown) => {
@@ -45,8 +51,19 @@ function revscaleTags(lead: Row): string[] {
   return Array.from(tags)
 }
 
+const SEL = 'id, revscale_id, first_name, last_name, email, phone, company, title, source_subtype, tags, notes'
+
+/** Channel + tags for a lead that has been seen through two warm channels. Inquiry outranks pixel. */
+function mergedChannel(a: string | null, b: string | null, tags: string[], inquiryAt?: string | null) {
+  const out = new Set(tags)
+  const both = a && b && a !== b && [a, b].includes('inquiry') && [a, b].includes('web_pixel')
+  if (both) out.add('also:web_pixel')
+  if (inquiryAt && (a === 'inquiry' || b === 'inquiry') && ![...out].some(t => t.startsWith('inquiry_at:'))) out.add(`inquiry_at:${inquiryAt.slice(0, 10)}`)
+  return { channel: a === 'inquiry' || b === 'inquiry' ? 'inquiry' : a || b, tags: Array.from(out) }
+}
+
 export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[], defaultChannel?: string | null) {
-  const result = { total: leads.length, inserted: 0, updated: 0, skipped: 0, errors: 0, firstError: null as string | null, newWarm: [] as Row[], needDetails: [] as string[] }
+  const result = { total: leads.length, inserted: 0, updated: 0, skipped: 0, errors: 0, firstError: null as string | null, merged: 0, newWarm: [] as Row[], needDetails: [] as string[] }
   const fail = (msg: string) => { result.errors++; result.firstError ??= msg }
 
   const incoming = leads.filter(l => clean(l.id))
@@ -56,10 +73,23 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
   const existing = new Map<string, Row>()
   for (const ids of chunk(incoming.map(l => String(l.id)), 200)) {
     const { data, error } = await db.from('leads')
-      .select('id, revscale_id, first_name, last_name, email, phone, company, title, source_subtype, tags, notes')
+      .select(SEL)
       .in('revscale_id', ids)
     if (error) { fail(error.message); continue }
     for (const r of data || []) existing.set(r.revscale_id, r)
+
+    // A lead merged into another keeps its Revscale id as an `rsid:` tag on the survivor.
+    const { data: merged } = await db.from('leads').select(`${SEL}, stage`).overlaps('tags', ids.map(i => `rsid:${i}`))
+    for (const r of merged || []) for (const t of (r.tags || []) as string[]) if (t.startsWith('rsid:')) existing.set(t.slice(5), r)
+  }
+
+  // One person, one lead: index the warm leads we hold by email so a visitor who is
+  // identified by the pixel and then sends an inquiry (or the reverse) is merged, not duplicated.
+  const byEmail = new Map<string, Row>()
+  {
+    const { data } = await db.from('leads').select(`${SEL}, stage, created_at`)
+      .eq('source', 'revscale').in('source_subtype', ['web_pixel', 'inquiry']).not('email', 'is', null).limit(5000)
+    for (const r of data || []) { const k = norm(r.email); if (k && !byEmail.has(k)) byEmail.set(k, r) }
   }
 
   const inserts: Row[] = []
@@ -84,7 +114,32 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
     // Inquiries arrive from the activity feed as id + email only; ask the caller for the rest.
     if (channel === 'inquiry' && !fields.first_name && !clean(prior?.first_name)) result.needDetails.push(id)
 
+    // Same person already in the CRM under another Revscale id → fold this record into that lead.
+    const twin = !prior && email && (channel === 'web_pixel' || channel === 'inquiry') ? byEmail.get(norm(email)) : null
+    if (twin && !twin.id) { result.skipped++; continue } // same person twice in one batch; next sync merges it
+    if (twin) {
+      const born = clean(lead.createdAt) || objectIdDate(id)
+      const m = mergedChannel(twin.source_subtype, channel, [...mergeRevscaleTags(twin.tags, tags), `rsid:${id}`], channel === 'inquiry' ? born : null)
+      const patch: Row = { tags: m.tags, source_subtype: m.channel }
+      for (const [k, v] of Object.entries(fields)) if (v && !clean(twin[k])) patch[k] = v
+      if (inquiry && !(twin.notes || '').includes(inquiry.slice(0, 40))) patch.notes = [`Inquiry: ${inquiry}`, clean(twin.notes)].filter(Boolean).join('\n\n')
+      const { error } = await db.from('leads').update(patch).eq('id', twin.id)
+      if (error) { fail(error.message); continue }
+      result.merged++
+      Object.assign(twin, patch); existing.set(id, twin)
+      // A known visitor who now sends an inquiry is news worth an alert.
+      if (channel === 'inquiry' && (fields.first_name || twin.first_name)) {
+        result.newWarm.push({
+          name: [twin.first_name, twin.last_name].filter(Boolean).join(' ') || email, channel: 'inquiry', company: twin.company,
+          email, phone: twin.phone, inquiry: inquiry ? inquiry.slice(0, 290) : null, alsoVisitedSite: true,
+          url: `https://signarama-crm.vercel.app/leads/${twin.id}`,
+        })
+      }
+      continue
+    }
+
     if (!prior) {
+      if (email && (channel === 'web_pixel' || channel === 'inquiry')) byEmail.set(norm(email), { ...fields, source_subtype: channel, tags, notes: null, _pending: id })
       const noteParts = [inquiry ? `Inquiry: ${inquiry}` : null, clean(lead.notes)].filter(Boolean)
       inserts.push({
         ...fields,
@@ -101,7 +156,12 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
 
     // Existing lead: refresh Revscale-owned fields, only fill blanks for the rest.
     const patch: Row = { tags: mergeRevscaleTags(prior.tags, tags) }
-    if (channel) patch.source_subtype = channel
+    if (channel) {
+      const m = mergedChannel(prior.source_subtype, channel, patch.tags)
+      const warmPair = ['web_pixel', 'inquiry'].includes(prior.source_subtype) && ['web_pixel', 'inquiry'].includes(channel)
+      patch.source_subtype = warmPair ? m.channel : channel
+      if (warmPair) patch.tags = m.tags
+    }
     for (const [k, v] of Object.entries(fields)) if (v && !clean(prior[k])) patch[k] = v
     if (inquiry && !clean(prior.notes)) patch.notes = `Inquiry: ${inquiry}`
     const detailsArrived = channel === 'inquiry' && fields.first_name && !clean(prior.first_name)
@@ -291,4 +351,52 @@ export async function normalizeRevscale(db: ReturnType<typeof adminDb>) {
     remaining -= group.length
   }
   return { revscaleLeads: all.length, changed, errors, remaining, channels: counts }
+}
+
+// ── Merge warm leads that are the same person (same email) ───────────────────
+
+export async function dedupeWarm(db: ReturnType<typeof adminDb>, dryRun = false) {
+  const { data, error } = await db.from('leads').select('*')
+    .eq('source', 'revscale').in('source_subtype', ['web_pixel', 'inquiry']).not('email', 'is', null).limit(5000)
+  if (error) throw error
+  const groups = new Map<string, Row[]>()
+  for (const r of data || []) { const k = norm(r.email); if (!k) continue; const g = groups.get(k); if (g) g.push(r); else groups.set(k, [r]) }
+
+  const report: Row[] = []
+  let removed = 0, errors = 0
+  for (const rows of groups.values()) {
+    if (rows.length < 2) continue
+    // Keep the record someone has worked; otherwise the inquiry; otherwise the oldest.
+    const rank = (r: Row) => (r.stage !== 'new' ? 4 : 0) + (r.deal_value ? 2 : 0) + (r.source_subtype === 'inquiry' ? 1 : 0)
+    rows.sort((a, b) => rank(b) - rank(a) || a.created_at.localeCompare(b.created_at))
+    const [keep, ...dups] = rows
+    const inq = rows.filter(r => r.source_subtype === 'inquiry').sort((a, b) => a.created_at.localeCompare(b.created_at))[0]
+    let tags: string[] = keep.tags || []
+    let channel: string | null = keep.source_subtype
+    const patch: Row = {}
+    const notes = [clean(keep.notes)]
+    for (const d of dups) {
+      const m = mergedChannel(channel, d.source_subtype, [...tags, ...(d.tags || []), `rsid:${d.revscale_id}`], inq?.created_at)
+      tags = m.tags; channel = m.channel
+      for (const k of ['first_name', 'last_name', 'phone', 'company', 'title', 'deal_value', 'next_step', 'next_step_due', 'project_type']) {
+        if (d[k] && !keep[k] && !patch[k]) patch[k] = d[k]
+      }
+      if (clean(d.notes) && !notes.some(n => n && n.includes(d.notes.slice(0, 40)))) notes.unshift(d.notes)
+    }
+    patch.tags = Array.from(new Set(tags)); patch.source_subtype = channel
+    patch.notes = notes.filter(Boolean).join('\n\n') || null
+    patch.created_at = rows.map(r => r.created_at).sort()[0] // first time we ever saw them
+    report.push({ email: keep.email, kept: keep.id, removed: dups.length, channels: rows.map(r => r.source_subtype) })
+    if (dryRun) continue
+
+    const up = await db.from('leads').update(patch).eq('id', keep.id)
+    if (up.error) { errors++; continue }
+    for (const d of dups) {
+      await db.from('activities').update({ lead_id: keep.id }).eq('lead_id', d.id)
+      await db.from('ai_drafts').update({ lead_id: keep.id }).eq('lead_id', d.id)
+      const del = await db.from('leads').delete().eq('id', d.id)
+      if (del.error) errors++; else removed++
+    }
+  }
+  return { duplicateGroups: report.length, removed, errors, dryRun, sample: report.slice(0, 40) }
 }
