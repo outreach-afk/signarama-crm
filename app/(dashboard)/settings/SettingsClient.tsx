@@ -198,8 +198,8 @@ function TeamSettingsForm() {
         <span style={{ fontSize: 12 }}>Shown on handoffs, owners and the activity log.</span>
       </div>
       <p style={{ marginBottom: 14 }}>
-        The opener makes first contact and works the first steps of the playbook. When a lead reaches the handoff step it moves to the closer,
-        with a short note, and shows up at the top of their Today list. New Web Pixel and Inquiry leads are given to the opener automatically.
+        Inquiry leads go to the opener, who makes first contact and works the first steps of the playbook. When an inquiry reaches the handoff step it moves to the closer,
+        with a short note, and shows up at the top of their Today list. Web Pixel leads go straight to the closer and are never handed off.
       </p>
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
         <div><div style={lab}>Opener</div>

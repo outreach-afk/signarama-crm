@@ -355,7 +355,7 @@ export default function LeadDetailClient() {
               <option value="">No owner</option>
               {team.profiles.map(p => <option key={p.id} value={p.id}>{team.name(p.id)}</option>)}
             </select>
-            {team.ready && lead.assigned_to === team.settings.opener && lead.assigned_to !== team.settings.closer && !isClosed(lead.stage) && (
+            {team.ready && lead.source_subtype === 'inquiry' && lead.assigned_to === team.settings.opener && lead.assigned_to !== team.settings.closer && !isClosed(lead.stage) && (
               <button onClick={() => requestHandoff(lead, 'Handed off early', false)}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer', background: 'rgba(245,158,11,0.12)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.35)' }}>
                 <ArrowRightLeft size={12} /> Hand off to {team.name(team.settings.closer)}

@@ -81,7 +81,7 @@ export default function TodayClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads, followUps, owner, team.me])
 
-  const canHandOff = (l: Lead) => team.ready && l.assigned_to === team.settings.opener && l.assigned_to !== team.settings.closer
+  const canHandOff = (l: Lead) => team.ready && l.source_subtype === 'inquiry' && l.assigned_to === team.settings.opener && l.assigned_to !== team.settings.closer
 
   const snooze = (l: Lead, days: number, f: FollowUp) =>
     patch(l, { next_step_due: new Date(Date.now() + days * DAY).toISOString(), next_step: l.next_step || f.label })

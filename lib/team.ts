@@ -21,3 +21,11 @@ export function initials(p: Profile | null | undefined) {
   const src = p.full_name || (p.email || '').split('@')[0]
   return src.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map(x => x[0]!.toUpperCase()).join('') || '?'
 }
+
+/** Only Inquiry leads go through the opener → closer handoff. Web Pixel leads belong to the closer from the start. */
+export const HANDOFF_CHANNELS = ['inquiry']
+export function ownerForNewLead(channel: string | null | undefined, team: Pick<TeamSettings, 'opener' | 'closer'>) {
+  if (channel === 'inquiry') return team.opener || null
+  if (channel === 'web_pixel') return team.closer || null
+  return null
+}

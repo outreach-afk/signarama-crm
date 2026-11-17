@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { Lead, Stage } from '@/types/database'
 import { CHANNELS, alsoPixel, fetchAllLeads, isClosed, leadChannel, type Channel } from '@/lib/leads'
 import { cadenceFor, cadenceTouches, followUp, groupTouches, stepsDone, type FollowUp, type TouchLike, type TouchType } from '@/lib/cadence'
-import { DEFAULT_TEAM, TEAM_KEY, displayName, initials, type Profile, type TeamSettings } from '@/lib/team'
+import { DEFAULT_TEAM, HANDOFF_CHANNELS, TEAM_KEY, displayName, initials, type Profile, type TeamSettings } from '@/lib/team'
 
 export const STAGES: Stage[] = ['new', 'contacted', 'quoted', 'negotiating', 'won', 'completed', 'lost', 'unqualified']
 export const STAGE_COLOR: Record<string, string> = {
@@ -225,9 +225,10 @@ export function useTeam() {
  */
 export function maybeHandoff(lead: Lead, team: TeamSettings, reason: string | null, engaged: boolean, acts?: TouchLike[]) {
   if (!team.opener || !team.closer || lead.assigned_to !== team.opener || isClosed(lead.stage)) return
+  if (!HANDOFF_CHANNELS.includes(lead.source_subtype || '')) return
   if (engaged && team.handoffOnEngage) { requestHandoff(lead, reason || 'They engaged: spoke with them', true); return }
   const cadence = cadenceFor(lead)
-  if (!cadence || !acts || !['inquiry', 'web_pixel'].includes(cadence.key)) return
+  if (!cadence || !acts || cadence.key !== 'inquiry') return
   const done = stepsDone(cadence, cadenceTouches(lead, acts).counted)
   if (done >= team.handoffStep) requestHandoff(lead, `Step ${team.handoffStep} done`, true)
 }

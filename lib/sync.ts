@@ -1,5 +1,6 @@
 // Server-side sync helpers shared by /api/leads/ingest, /api/leads/sync and the cron.
 import { createHash } from 'crypto'
+import { ownerForNewLead } from '@/lib/team'
 import { createClient as createSupabase } from '@supabase/supabase-js'
 import {
   TAG_APOLLO, TAG_APOLLO_POSSIBLE, TAG_IN_SEQUENCE, channelFor, fetchAllLeads,
@@ -104,9 +105,10 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
     return Math.abs(new Date(t.created_at).getTime() - new Date(born).getTime()) <= 14 * 86_400_000 ? t : null
   }
 
-  // New warm leads start with the opener (Settings → Follow-up team).
+  // New Inquiry leads start with the opener, Web Pixel leads with the closer (Settings → Follow-up team).
   const { data: teamRow } = await db.from('app_settings').select('value').eq('key', 'followup_team').maybeSingle()
-  const opener: string | null = (teamRow?.value as { opener?: string | null } | undefined)?.opener || null
+  const team = (teamRow?.value as { opener?: string | null; closer?: string | null } | undefined) || {}
+  const owners = { opener: team.opener || null, closer: team.closer || null }
 
   const inserts: Row[] = []
   for (const lead of incoming) {
@@ -165,7 +167,7 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
         source: 'revscale',
         source_subtype: channel,
         revscale_id: id,
-        assigned_to: opener && (channel === 'web_pixel' || channel === 'inquiry') ? opener : null,
+        assigned_to: ownerForNewLead(channel, owners),
         tags,
         notes: noteParts.length ? noteParts.join('\n\n') : null,
         intent_score: lead.intent_score ?? lead.leadScore ?? null,
