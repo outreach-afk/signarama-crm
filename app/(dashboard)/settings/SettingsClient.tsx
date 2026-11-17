@@ -181,9 +181,22 @@ function TeamSettingsForm() {
   const sel: React.CSSProperties = { padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 13, outline: 'none', minWidth: 180 }
   const lab: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 5 }
   const people = team.profiles
+  const meProfile = people.find(p => p.id === team.me)
+  const [myName, setMyName] = useState<string | null>(null)
+  async function saveName() {
+    if (!team.me || myName === null) return
+    const { error } = await createClient().from('profiles').update({ full_name: myName.trim() || null } as never).eq('id', team.me)
+    setMsg(error ? `✗ ${error.message}` : '✓ Name saved'); setMyName(null); qc.invalidateQueries({ queryKey: ['team'] })
+  }
 
   return (
     <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 18, paddingBottom: 16, borderBottom: '1px solid var(--border)' }}>
+        <div><div style={lab}>Your name in the CRM</div>
+          <input value={myName ?? meProfile?.full_name ?? ''} onChange={e => setMyName(e.target.value)} placeholder="First and last name" style={{ ...sel, minWidth: 240 }} /></div>
+        <button onClick={saveName} disabled={myName === null} style={{ padding: '8px 14px', background: 'var(--primary)', border: 'none', borderRadius: 7, color: '#fff', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>Save name</button>
+        <span style={{ fontSize: 12 }}>Shown on handoffs, owners and the activity log.</span>
+      </div>
       <p style={{ marginBottom: 14 }}>
         The opener makes first contact and works the first steps of the playbook. When a lead reaches the handoff step it moves to the closer,
         with a short note, and shows up at the top of their Today list. New Web Pixel and Inquiry leads are given to the opener automatically.
