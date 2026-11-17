@@ -19,10 +19,15 @@ export async function saveRefreshToken(token: string, email: string | null) {
   if (r.error) throw new Error(r.error.message)
 }
 
-export function authUrl(redirectUri: string, state: string) {
+export const ENABLE_SCOPE = 'https://www.googleapis.com/auth/service.management'
+/** Google Cloud project number = the digits before the dash in the OAuth client id. */
+export const projectNumber = () => (process.env.GMAIL_CLIENT_ID || '').split('-')[0]
+
+export function authUrl(redirectUri: string, state: string, purpose: 'gmail' | 'enable' = 'gmail') {
   const p = new URLSearchParams({
     client_id: process.env.GMAIL_CLIENT_ID || '', redirect_uri: redirectUri, response_type: 'code',
-    scope: GMAIL_SCOPES.join(' '), access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true',
+    scope: purpose === 'enable' ? ENABLE_SCOPE : GMAIL_SCOPES.join(' '),
+    access_type: purpose === 'enable' ? 'online' : 'offline', prompt: 'consent', ...(purpose === 'enable' ? {} : { include_granted_scopes: 'true' }),
     login_hint: process.env.GMAIL_FROM || '', state,
   })
   return `https://accounts.google.com/o/oauth2/v2/auth?${p}`
