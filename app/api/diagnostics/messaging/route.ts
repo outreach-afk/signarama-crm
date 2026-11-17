@@ -1,4 +1,6 @@
 import { NextResponse, connection } from 'next/server'
+import { accessToken, getRefreshToken } from '@/lib/gmail'
+import { adminDb } from '@/lib/sync'
 
 export const maxDuration = 30
 
@@ -11,18 +13,16 @@ async function gmail() {
   const out: Record<string, unknown> = {
     env: { GMAIL_CLIENT_ID: mask(process.env.GMAIL_CLIENT_ID), GMAIL_CLIENT_SECRET: mask(process.env.GMAIL_CLIENT_SECRET), GMAIL_REFRESH_TOKEN: mask(process.env.GMAIL_REFRESH_TOKEN), GMAIL_FROM: process.env.GMAIL_FROM || 'MISSING' },
   }
-  const r = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: process.env.GMAIL_CLIENT_ID || '', client_secret: process.env.GMAIL_CLIENT_SECRET || '', refresh_token: process.env.GMAIL_REFRESH_TOKEN || '', grant_type: 'refresh_token' }),
-  })
-  const d = await r.json().catch(() => ({}))
-  out.tokenStatus = r.status
-  if (!r.ok) { out.tokenError = { error: d.error, description: d.error_description }; return out }
-  out.scopes = d.scope
-  const p = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', { headers: { Authorization: `Bearer ${d.access_token}` } })
-  out.profileStatus = p.status
-  if (p.ok) { const j = await p.json(); out.mailbox = j.emailAddress; out.fromMatchesMailbox = (j.emailAddress || '').toLowerCase() === (process.env.GMAIL_FROM || '').toLowerCase() }
-  else out.profileError = (await p.text()).slice(0, 300)
+  const { source } = await getRefreshToken()
+  out.tokenSource = source
+  const t = await accessToken()
+  out.tokenStatus = t.status
+  if (!t.ok) { try { const e = JSON.parse(t.text); out.tokenError = { error: e.error, description: e.error_description } } catch { out.tokenError = { error: t.text.slice(0, 100) } } return out }
+  const scopes = String(JSON.parse(t.text).scope || '')
+  out.scopes = scopes
+  out.canSend = scopes.includes('gmail.send')
+  const { data } = await adminDb().from('private_settings').select('value').eq('key', 'gmail_account').maybeSingle()
+  out.mailbox = (data?.value as string | undefined) || process.env.GMAIL_FROM
   return out
 }
 

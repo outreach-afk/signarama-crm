@@ -238,7 +238,7 @@ function TeamSettingsForm() {
 }
 
 type Diag = {
-  gmail?: { tokenStatus?: number; tokenError?: { error?: string }; mailbox?: string; error?: string }
+  gmail?: { tokenStatus?: number; tokenError?: { error?: string }; mailbox?: string; canSend?: boolean; error?: string }
   ringcentral?: { tokenStatus?: number; tokenError?: { error?: string; message?: string }; fromNumber?: string | null; canSendSms?: boolean; error?: string }
   anthropic?: { ok?: boolean; noCredit?: boolean; error?: string }
 }
@@ -246,6 +246,8 @@ type Diag = {
 function Connections() {
   const [d, setD] = useState<Diag | null>(null)
   const [loading, setLoading] = useState(false)
+  const [banner, setBanner] = useState<string | null>(null)
+  useEffect(() => { setBanner(new URLSearchParams(window.location.search).get('gmail')) }, [])
   const check = () => { setLoading(true); fetch('/api/diagnostics/messaging').then(r => r.json()).then(setD).catch(() => setD({})).finally(() => setLoading(false)) }
   useEffect(check, [])
 
@@ -253,11 +255,11 @@ function Connections() {
   const rows: { name: string; ok: boolean | null; text: string; fix?: string }[] = d ? [
     {
       name: 'Email (Gmail)',
-      ok: d.gmail?.tokenStatus === 200 && !!d.gmail?.mailbox,
-      text: d.gmail?.tokenStatus === 200 ? `Connected. Emails send from ${d.gmail?.mailbox}.`
+      ok: d.gmail?.tokenStatus === 200 && d.gmail?.canSend !== false,
+      text: d.gmail?.tokenStatus === 200 ? `Connected. Emails send from ${d.gmail?.mailbox}.${d.gmail?.canSend === false ? ' (No send permission: reconnect.)' : ''}`
         : d.gmail?.tokenError?.error === 'invalid_grant' ? 'Disconnected. The saved Gmail login expired or was revoked, so no email can be sent from the CRM.'
         : `Not working${d.gmail?.tokenError?.error ? ` (${d.gmail.tokenError.error})` : ''}.`,
-      fix: d.gmail?.tokenStatus === 200 ? undefined : 'Needs reconnecting: sign in to Google as outreach@ and approve the CRM to send email. Ask Claude to walk through it.',
+      fix: d.gmail?.tokenStatus === 200 ? undefined : 'Press Connect Gmail and approve with the outreach@ Google account.',
     },
     {
       name: 'Text messages (RingCentral)',
@@ -275,6 +277,11 @@ function Connections() {
 
   return (
     <div>
+      {banner && (
+        <div style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 8, fontSize: 13, background: banner.startsWith('connected') ? 'var(--success-dim)' : 'var(--danger-dim)', color: banner.startsWith('connected') ? 'var(--success)' : 'var(--danger)' }}>
+          {banner.startsWith('connected') ? `✓ Gmail connected${banner.slice(10) ? ` as ${banner.slice(10)}` : ''}.` : `✗ Gmail was not connected: ${banner.replace(/^error:/, '')}`}
+        </div>
+      )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {!d && <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Checking…</div>}
         {rows.map(r => (
@@ -284,6 +291,11 @@ function Connections() {
               <div style={{ fontWeight: 600, fontSize: 14 }}>{r.name}</div>
               <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 2 }}>{r.text}</div>
               {r.fix && <div style={{ fontSize: 12, color: 'var(--warning)', marginTop: 4 }}>{r.fix}</div>}
+              {r.name.startsWith('Email') && (
+                <a href="/api/gmail/connect" style={{ display: 'inline-block', marginTop: 8, padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600, textDecoration: 'none', background: r.ok ? 'transparent' : 'var(--primary)', color: r.ok ? 'var(--text-secondary)' : '#fff', border: r.ok ? '1px solid var(--border)' : 'none' }}>
+                  {r.ok ? 'Reconnect Gmail' : 'Connect Gmail'}
+                </a>
+              )}
             </div>
           </div>
         ))}

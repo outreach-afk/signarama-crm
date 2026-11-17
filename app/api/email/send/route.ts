@@ -1,21 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { encodeHeader, gmailError } from '@/lib/messaging'
+import { accessToken } from '@/lib/gmail'
 
 async function getGmailToken() {
-  const res = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: process.env.GMAIL_CLIENT_ID!,
-      client_secret: process.env.GMAIL_CLIENT_SECRET!,
-      refresh_token: process.env.GMAIL_REFRESH_TOKEN!,
-      grant_type: 'refresh_token',
-    }),
-  })
-  if (!res.ok) throw new Error(gmailError(res.status, await res.text()))
-  const data = await res.json()
-  return data.access_token as string
+  const r = await accessToken()
+  if (!r.ok || !r.token) throw new Error(gmailError(r.status, r.text))
+  return r.token
 }
 
 function makeRaw(to: string, from: string, subject: string, body: string) {
