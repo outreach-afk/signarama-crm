@@ -185,12 +185,13 @@ export default function LeadDetailClient() {
         ? { leadId: id, to: lead?.phone, body: modalBody }
         : { leadId: id, to: lead?.email, subject: modalSubject, body: modalBody }
       const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      if (!res.ok) throw new Error('Failed')
-      setModalMsg('✓ Sent!')
+      const out = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(out.error || `Send failed (${res.status})`)
+      setModalMsg(modal === 'sms' ? '✓ Sent to RingCentral for delivery' : '✓ Email sent')
       qc.invalidateQueries({ queryKey: ['activities', id] })
       setTimeout(() => setModal(null), 1200)
-    } catch {
-      setModalMsg('✗ Failed. Check your connection settings.')
+    } catch (e) {
+      setModalMsg(`✗ ${e instanceof Error ? e.message : 'Send failed'}`)
     } finally {
       setModalSending(false)
     }
@@ -283,13 +284,13 @@ export default function LeadDetailClient() {
       {/* Action Bar */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 28 }}>
         {[
-          { icon: '✉️', label: 'Email', color: '#3B82F6', action: () => openModal('email') },
-          { icon: '📞', label: 'Call', color: '#10B981', action: () => { if (lead.phone) window.location.href = `tel:${lead.phone}`; else alert('No phone number saved for this lead.') } },
-          { icon: '💬', label: 'SMS', color: '#8B5CF6', action: () => openModal('sms') },
-          { icon: '📝', label: 'Note', color: '#F59E0B', action: () => openModal('note') },
-        ].map(({ icon, label, color, action }) => (
-          <button key={label} onClick={action}
-            style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', background: 'var(--surface)', border: `1px solid ${color}40`, borderRadius: 9, color, cursor: 'pointer', fontSize: 13, fontWeight: 600, transition: 'background 0.15s' }}
+          { icon: '✉️', label: 'Email', color: '#3B82F6', action: () => openModal('email'), off: !lead.email && 'No email address on this lead' },
+          { icon: '📞', label: 'Call', color: '#10B981', action: () => { if (lead.phone) window.location.href = `tel:${lead.phone}` }, off: !lead.phone && 'No phone number on this lead' },
+          { icon: '💬', label: 'SMS', color: '#8B5CF6', action: () => openModal('sms'), off: !lead.phone && 'No phone number on this lead' },
+          { icon: '📝', label: 'Note', color: '#F59E0B', action: () => openModal('note'), off: false },
+        ].map(({ icon, label, color, action, off }) => (
+          <button key={label} onClick={action} disabled={!!off} title={typeof off === 'string' ? off : undefined}
+            style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 16px', background: 'var(--surface)', border: `1px solid ${color}40`, borderRadius: 9, color, cursor: off ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, transition: 'background 0.15s', opacity: off ? 0.4 : 1 }}
             onMouseEnter={e => (e.currentTarget.style.background = `${color}15`)}
             onMouseLeave={e => (e.currentTarget.style.background = 'var(--surface)')}>
             <span>{icon}</span> {label}

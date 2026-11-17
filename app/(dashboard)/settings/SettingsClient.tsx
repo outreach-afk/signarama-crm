@@ -65,6 +65,10 @@ export default function SettingsClient() {
         <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Manage integrations and team configuration.</p>
       </div>
 
+      <Section title="Connections">
+        <Connections />
+      </Section>
+
       <Section title="Lead Sync">
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 18, lineHeight: 1.6 }}>
           Pull leads from Apollo and Revscale into your CRM. Existing leads are matched by ID and updated — no duplicates.
@@ -229,6 +233,65 @@ function TeamSettingsForm() {
         {msg && <span style={{ fontSize: 12, color: msg.startsWith('✗') ? 'var(--danger)' : 'var(--success)' }}>{msg}</span>}
       </div>
       <p style={{ fontSize: 12, marginTop: 10 }}>Only people who have created an account appear in these lists. A new team member signs up at /register first.</p>
+    </div>
+  )
+}
+
+type Diag = {
+  gmail?: { tokenStatus?: number; tokenError?: { error?: string }; mailbox?: string; error?: string }
+  ringcentral?: { tokenStatus?: number; tokenError?: { error?: string; message?: string }; fromNumber?: string | null; canSendSms?: boolean; error?: string }
+  anthropic?: { ok?: boolean; noCredit?: boolean; error?: string }
+}
+
+function Connections() {
+  const [d, setD] = useState<Diag | null>(null)
+  const [loading, setLoading] = useState(false)
+  const check = () => { setLoading(true); fetch('/api/diagnostics/messaging').then(r => r.json()).then(setD).catch(() => setD({})).finally(() => setLoading(false)) }
+  useEffect(check, [])
+
+  const fmtPhone = (p?: string | null) => (p || '').replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3') || '—'
+  const rows: { name: string; ok: boolean | null; text: string; fix?: string }[] = d ? [
+    {
+      name: 'Email (Gmail)',
+      ok: d.gmail?.tokenStatus === 200 && !!d.gmail?.mailbox,
+      text: d.gmail?.tokenStatus === 200 ? `Connected. Emails send from ${d.gmail?.mailbox}.`
+        : d.gmail?.tokenError?.error === 'invalid_grant' ? 'Disconnected. The saved Gmail login expired or was revoked, so no email can be sent from the CRM.'
+        : `Not working${d.gmail?.tokenError?.error ? ` (${d.gmail.tokenError.error})` : ''}.`,
+      fix: d.gmail?.tokenStatus === 200 ? undefined : 'Needs reconnecting: sign in to Google as outreach@ and approve the CRM to send email. Ask Claude to walk through it.',
+    },
+    {
+      name: 'Text messages (RingCentral)',
+      ok: d.ringcentral?.tokenStatus === 200 && !!d.ringcentral?.canSendSms,
+      text: d.ringcentral?.tokenStatus === 200 ? `Connected. Texts send from ${fmtPhone(d.ringcentral?.fromNumber)}.` : `Not working${d.ringcentral?.tokenError?.message ? `: ${d.ringcentral.tokenError.message}` : ''}.`,
+      fix: d.ringcentral?.tokenStatus === 200 ? undefined : 'The RingCentral login saved in Vercel was rejected and needs replacing.',
+    },
+    {
+      name: 'AI drafts (Anthropic)',
+      ok: !!d.anthropic?.ok,
+      text: d.anthropic?.ok ? 'Working. Drafts are written by AI.' : d.anthropic?.noCredit ? 'Out of credit. Drafts fall back to a standard template.' : 'Not working. Drafts fall back to a standard template.',
+      fix: d.anthropic?.ok ? undefined : 'Add credit at console.anthropic.com → Plans & Billing.',
+    },
+  ] : []
+
+  return (
+    <div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {!d && <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Checking…</div>}
+        {rows.map(r => (
+          <div key={r.name} style={{ display: 'flex', gap: 12, alignItems: 'flex-start', padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 10, border: '1px solid var(--border)' }}>
+            <span style={{ width: 10, height: 10, borderRadius: 99, marginTop: 5, flexShrink: 0, background: r.ok ? 'var(--success)' : 'var(--danger)', boxShadow: `0 0 10px ${r.ok ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)'}` }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{r.name}</div>
+              <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 2 }}>{r.text}</div>
+              {r.fix && <div style={{ fontSize: 12, color: 'var(--warning)', marginTop: 4 }}>{r.fix}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+      <button onClick={check} disabled={loading} style={{ marginTop: 12, padding: '7px 14px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+        {loading ? 'Checking…' : 'Check again'}
+      </button>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>This check signs in to each service but never sends a message.</p>
     </div>
   )
 }

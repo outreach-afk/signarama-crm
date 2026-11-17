@@ -39,29 +39,31 @@ async function ringcentral() {
   out.tokenStatus = r.status
   if (!r.ok) { out.tokenError = { error: d.error, description: d.error_description, errorCode: d.errorCode, message: d.message }; return out }
   out.scopes = d.scope
-  const h = { Authorization: `Bearer ${d.access_token}` }
   // No send of any kind here: RingCentral turns letters into keypad digits, so even an 'invalid' recipient can be a real number.
 
-  const ext = await fetch('https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~', { headers: h })
-  if (ext.ok) { const e = await ext.json(); out.extension = { name: e.name, number: e.extensionNumber, type: e.type, status: e.status } }
-  else out.extensionError = (await ext.text()).slice(0, 300)
-  const pn = await fetch('https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~/phone-number?perPage=100', { headers: h })
-  if (pn.ok) {
-    const j = await pn.json()
-    const nums = (j.records || []).map((n: { phoneNumber: string; usageType: string; features?: string[]; type?: string }) => ({ number: n.phoneNumber, usage: n.usageType, type: n.type, sms: (n.features || []).includes('SmsSender') }))
-    out.numbers = nums
-    out.fromNumberOnThisExtension = nums.some((n: { number: string }) => digits(n.number) === digits(process.env.RINGCENTRAL_FROM_NUMBER))
-    out.fromNumberCanSendSms = nums.some((n: { number: string; sms: boolean }) => digits(n.number) === digits(process.env.RINGCENTRAL_FROM_NUMBER) && n.sms)
-  } else out.numbersError = (await pn.text()).slice(0, 300)
+  out.fromNumber = process.env.RINGCENTRAL_FROM_NUMBER || null
+  out.canSendSms = /\bSMS\b/.test(String(d.scope || ''))
   return out
+}
+
+async function anthropic() {
+  if (!process.env.ANTHROPIC_API_KEY) return { status: 0, ok: false, error: 'ANTHROPIC_API_KEY is not set' }
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 1, messages: [{ role: 'user', content: 'ok' }] }),
+  })
+  if (r.ok) return { status: r.status, ok: true }
+  const t = await r.text()
+  return { status: r.status, ok: false, noCredit: /credit balance/i.test(t), error: t.slice(0, 200) }
 }
 
 export async function GET() {
   await connection()
-  const [g, rc] = await Promise.allSettled([gmail(), ringcentral()])
+  const [g, rc, ai] = await Promise.allSettled([gmail(), ringcentral(), anthropic()])
   return NextResponse.json({
     gmail: g.status === 'fulfilled' ? g.value : { error: String(g.reason) },
     ringcentral: rc.status === 'fulfilled' ? rc.value : { error: String(rc.reason) },
-    anthropic: { ANTHROPIC_API_KEY: mask(process.env.ANTHROPIC_API_KEY) },
+    anthropic: ai.status === 'fulfilled' ? ai.value : { ok: false, error: String(ai.reason) },
   })
 }

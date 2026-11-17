@@ -286,9 +286,10 @@ export default function DashboardClient() {
         ? { leadId: quickLead.id, to: quickLead.phone, body: quickBody }
         : { leadId: quickLead.id, to: quickLead.email, subject: quickSubject, body: quickBody }
       const r = await fetch(ep, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      if (!r.ok) throw new Error('Failed')
+      const out = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(out.error || `Send failed (${r.status})`)
       setQuickMsg('✓ Sent!'); setTimeout(closeQuick, 1200)
-    } catch { setQuickMsg('✗ Failed to send') }
+    } catch (e) { setQuickMsg(`✗ ${e instanceof Error ? e.message : 'Failed to send'}`) }
     finally { setQuickSending(false) }
   }
 
