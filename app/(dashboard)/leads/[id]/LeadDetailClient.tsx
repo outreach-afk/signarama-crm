@@ -105,12 +105,14 @@ export default function LeadDetailClient() {
   const [modalSending, setModalSending] = useState(false)
   const [modalMsg, setModalMsg] = useState('')
   const [modalDrafting, setModalDrafting] = useState(false)
+  const [modalTo, setModalTo] = useState('')
 
   const openModal = useCallback((m: 'sms' | 'email' | 'note') => {
     setModal(m)
     setModalBody('')
-    setModalSubject(m === 'email' ? `Follow up — ${lead?.company || ''}`.trim() : '')
+    setModalSubject(m === 'email' ? (lead?.company ? `Follow up — ${lead.company}` : 'Following up from Signarama Corona') : '')
     setModalMsg('')
+    setModalTo(m === 'sms' ? lead?.phone || '' : m === 'email' ? lead?.email || '' : '')
   }, [lead])
 
   // Follow-up: last call / email / SMS and the next step from the playbook.
@@ -180,13 +182,19 @@ export default function LeadDetailClient() {
         setModal(null)
         return
       }
+      const to = modalTo.trim()
+      if (!to) throw new Error(modal === 'sms' ? 'Add the mobile number to text.' : 'Add the email address.')
+      if (modal === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new Error('That email address does not look right.')
       const endpoint = modal === 'sms' ? '/api/sms/send' : '/api/email/send'
       const body = modal === 'sms'
-        ? { leadId: id, to: lead?.phone, body: modalBody }
-        : { leadId: id, to: lead?.email, subject: modalSubject, body: modalBody }
+        ? { leadId: id, to, body: modalBody }
+        : { leadId: id, to, subject: modalSubject, body: modalBody }
       const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const out = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(out.error || `Send failed (${res.status})`)
+      // A number or address typed here is saved on the lead so the next touch has it.
+      const key = modal === 'sms' ? 'phone' : 'email'
+      if (lead && !lead[key]) { await supabase.from('leads').update({ [key]: to } as never).eq('id', id); qc.invalidateQueries({ queryKey: ['lead', id] }) }
       setModalMsg(modal === 'sms' ? '✓ Sent to RingCentral for delivery' : '✓ Email sent')
       qc.invalidateQueries({ queryKey: ['activities', id] })
       setTimeout(() => setModal(null), 1200)
@@ -284,9 +292,9 @@ export default function LeadDetailClient() {
       {/* Action Bar */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 28 }}>
         {[
-          { icon: '✉️', label: 'Email', color: '#3B82F6', action: () => openModal('email'), off: !lead.email && 'No email address on this lead' },
+          { icon: '✉️', label: 'Email', color: '#3B82F6', action: () => openModal('email'), off: false },
           { icon: '📞', label: 'Call', color: '#10B981', action: () => { if (lead.phone) window.location.href = `tel:${lead.phone}` }, off: !lead.phone && 'No phone number on this lead' },
-          { icon: '💬', label: 'SMS', color: '#8B5CF6', action: () => openModal('sms'), off: !lead.phone && 'No phone number on this lead' },
+          { icon: '💬', label: 'SMS', color: '#8B5CF6', action: () => openModal('sms'), off: false },
           { icon: '📝', label: 'Note', color: '#F59E0B', action: () => openModal('note'), off: false },
         ].map(({ icon, label, color, action, off }) => (
           <button key={label} onClick={action} disabled={!!off} title={typeof off === 'string' ? off : undefined}
@@ -463,6 +471,18 @@ export default function LeadDetailClient() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {modal !== 'note' && (
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    {modal === 'sms' ? 'To (mobile number)' : 'To'}
+                  </label>
+                  <input value={modalTo} onChange={e => setModalTo(e.target.value)} type={modal === 'sms' ? 'tel' : 'email'}
+                    placeholder={modal === 'sms' ? '(951) 555-0123' : 'name@company.com'}
+                    style={{ width: '100%', padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 13, outline: 'none' }} />
+                  {modal === 'sms' && !lead.phone && <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>No number on this lead yet. Type one and it is saved to the lead when the text sends.</p>}
+                  {modal === 'email' && !lead.email && <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>No email on this lead yet. Type one and it is saved to the lead when the email sends.</p>}
+                </div>
+              )}
               {modal === 'email' && (
                 <div>
                   <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Subject</label>
