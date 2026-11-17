@@ -40,6 +40,13 @@ async function ringcentral() {
   if (!r.ok) { out.tokenError = { error: d.error, description: d.error_description, errorCode: d.errorCode, message: d.message }; return out }
   out.scopes = d.scope
   const h = { Authorization: `Bearer ${d.access_token}` }
+  // Dry run: a send to an impossible recipient. RingCentral validates the sender and permissions and
+  // rejects the recipient, so nothing can be delivered to anyone. Shows the real reason a send would fail.
+  const dry = await fetch('https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~/sms', {
+    method: 'POST', headers: { ...h, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: { phoneNumber: process.env.RINGCENTRAL_FROM_NUMBER }, to: [{ phoneNumber: 'not-a-number' }], text: 'diagnostic' }),
+  })
+  out.dryRun = { status: dry.status, body: (await dry.text()).slice(0, 500) }
   const ext = await fetch('https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~', { headers: h })
   if (ext.ok) { const e = await ext.json(); out.extension = { name: e.name, number: e.extensionNumber, type: e.type, status: e.status } }
   else out.extensionError = (await ext.text()).slice(0, 300)
