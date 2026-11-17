@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import { runApolloSync } from '@/lib/leads'
+import { useQueryClient } from '@tanstack/react-query'
+import { createClient } from '@/lib/supabase/client'
+import { useTeam } from '@/components/LeadBits'
+import { TEAM_KEY, type TeamSettings } from '@/lib/team'
+import { CADENCES } from '@/lib/cadence'
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '24px', marginBottom: 20 }}>
@@ -84,6 +89,10 @@ export default function SettingsClient() {
         </div>
       </Section>
 
+      <Section title="Follow-up team">
+        <TeamSettingsForm />
+      </Section>
+
       <Section title="Follow-ups in your own calendar">
         <CalendarFeed />
       </Section>
@@ -138,6 +147,75 @@ function CalendarFeed() {
           style={{ flex: 1, padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 12, outline: 'none' }} />
         <button onClick={copy} disabled={!url} style={{ padding: '7px 14px', background: 'var(--primary)', border: 'none', borderRadius: 7, color: '#fff', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>{copied ? '✓ Copied' : 'Copy'}</button>
       </div>
+    </div>
+  )
+}
+
+function TeamSettingsForm() {
+  const team = useTeam()
+  const qc = useQueryClient()
+  const [draft, setDraft] = useState<TeamSettings | null>(null)
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+  const v = draft || team.settings
+  const set = (k: Partial<TeamSettings>) => setDraft({ ...v, ...k })
+  const steps = CADENCES.inquiry.steps
+
+  async function save() {
+    setBusy(true); setMsg('')
+    const { error } = await createClient().from('app_settings').upsert({ key: TEAM_KEY, value: v, updated_at: new Date().toISOString() } as never)
+    setBusy(false)
+    if (error) { setMsg(`✗ ${error.message}`); return }
+    setDraft(null); setMsg('✓ Saved'); qc.invalidateQueries({ queryKey: ['team'] })
+  }
+  async function assign() {
+    setBusy(true); setMsg('')
+    try {
+      const r = await fetch('/api/team/assign', { method: 'POST' })
+      const d = await r.json()
+      setMsg(d.error ? `✗ ${d.error}` : d.message ? `✓ ${d.message}` : `✓ ${d.opener} leads given to ${team.name(v.opener)}, ${d.closer} to ${team.name(v.closer)}`)
+      qc.invalidateQueries({ queryKey: ['leads'] })
+    } finally { setBusy(false) }
+  }
+
+  const sel: React.CSSProperties = { padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 13, outline: 'none', minWidth: 180 }
+  const lab: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 5 }
+  const people = team.profiles
+
+  return (
+    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+      <p style={{ marginBottom: 14 }}>
+        The opener makes first contact and works the first steps of the playbook. When a lead reaches the handoff step it moves to the closer,
+        with a short note, and shows up at the top of their Today list. New Web Pixel and Inquiry leads are given to the opener automatically.
+      </p>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
+        <div><div style={lab}>Opener</div>
+          <select value={v.opener || ''} onChange={e => set({ opener: e.target.value || null })} style={sel}>
+            <option value="">Choose…</option>{people.map(p => <option key={p.id} value={p.id}>{team.name(p.id)}</option>)}
+          </select></div>
+        <div><div style={lab}>Closer</div>
+          <select value={v.closer || ''} onChange={e => set({ closer: e.target.value || null })} style={sel}>
+            <option value="">Choose…</option>{people.map(p => <option key={p.id} value={p.id}>{team.name(p.id)}</option>)}
+          </select></div>
+        <div><div style={lab}>Hand off after</div>
+          <select value={v.handoffStep} onChange={e => set({ handoffStep: Number(e.target.value) })} style={sel}>
+            {steps.map((s, i) => <option key={i} value={i + 1}>Step {i + 1} — {s.title}</option>)}
+          </select></div>
+      </div>
+      <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer', marginBottom: 16, color: 'var(--text)' }}>
+        <input type="checkbox" checked={v.handoffOnEngage} onChange={e => set({ handoffOnEngage: e.target.checked })} style={{ marginTop: 3 }} />
+        <span>Also hand off as soon as the lead engages
+          <span style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)' }}>A call logged as &ldquo;Spoke with them&rdquo;, or the lead moved to Quoted. The closer gets the lead while it is hot instead of after step {v.handoffStep}.</span>
+        </span>
+      </label>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button onClick={save} disabled={busy || !draft} style={{ padding: '7px 14px', background: 'var(--primary)', border: 'none', borderRadius: 7, color: '#fff', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>Save</button>
+        <button onClick={assign} disabled={busy || !!draft || !team.ready} title={draft ? 'Save first' : ''} style={{ padding: '7px 14px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+          Give owners to open warm leads
+        </button>
+        {msg && <span style={{ fontSize: 12, color: msg.startsWith('✗') ? 'var(--danger)' : 'var(--success)' }}>{msg}</span>}
+      </div>
+      <p style={{ fontSize: 12, marginTop: 10 }}>Only people who have created an account appear in these lists. A new team member signs up at /register first.</p>
     </div>
   )
 }

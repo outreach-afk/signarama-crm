@@ -30,7 +30,7 @@ export const TAG_APOLLO = 'apollo_outreach'          // matched an Apollo contac
 export const TAG_APOLLO_POSSIBLE = 'apollo_possible' // matched an Apollo contact by full name only
 export const TAG_IN_SEQUENCE = 'apollo_sequence'     // Apollo contact enrolled in a sequence
 const MACHINE_PREFIXES = ['rs:', 'sentiment:']
-const HIDDEN_PREFIXES = ['rsid:', 'also:', 'inquiry_at:', 'enriched']
+const HIDDEN_PREFIXES = ['rsid:', 'also:', 'inquiry_at:', 'enriched', 'handoff_new']
 const MACHINE_TAGS = [TAG_APOLLO, TAG_APOLLO_POSSIBLE, TAG_IN_SEQUENCE]
 
 export function isMachineTag(t: string) {
@@ -169,4 +169,29 @@ export function inquiryAt(l: LeadLike & { created_at: string }): string | null {
   if (l.source_subtype !== 'inquiry') return null
   const t = (l.tags || []).find(x => x.startsWith('inquiry_at:'))
   return t ? `${t.slice(11)}T12:00:00Z` : l.created_at
+}
+
+// ── Closing a lead ───────────────────────────────────────────────────────────
+// Lost = a real opportunity we did not win. Unqualified = never a real opportunity.
+// Keeping them apart stops junk inquiries from making the close rate look worse than it is.
+export const CLOSED_STAGES = ['won', 'completed', 'lost', 'unqualified'] as const
+export const isClosed = (stage: string) => (CLOSED_STAGES as readonly string[]).includes(stage)
+export const isOpenStage = (stage: string) => !isClosed(stage)
+
+export const CLOSE_REASONS: Record<'lost' | 'unqualified', { label: string; hint?: string }[]> = {
+  lost: [
+    { label: 'Went with another vendor' },
+    { label: 'Price too high' },
+    { label: 'We took too long to respond', hint: 'Our side was slow: the follow-up or the quote came too late.' },
+    { label: 'Stopped responding', hint: 'They went quiet after we made contact.' },
+    { label: 'Project cancelled or on hold' },
+    { label: 'Other' },
+  ],
+  unqualified: [
+    { label: "We don't offer this", hint: 'For example t-shirts or apparel printing.' },
+    { label: 'Contact details missing or wrong', hint: 'No usable phone or email, e.g. a fake number.' },
+    { label: 'Outside our service area' },
+    { label: 'Spam, test or job seeker' },
+    { label: 'Other' },
+  ],
 }

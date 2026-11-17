@@ -4,7 +4,8 @@ import { useState } from 'react'
 import Link from 'next/link'
 import type { Lead, Stage } from '@/types/database'
 import { fullName, timeAgo } from '@/lib/leads'
-import { ChannelPill, STAGES, STAGE_COLOR, h1, isWarm, sub, useLeads } from '@/components/LeadBits'
+import { ChannelPill, OwnerChip, STAGES, STAGE_COLOR, h1, isWarm, sub, useLeads, useTeam } from '@/components/LeadBits'
+import { isClosed } from '@/lib/leads'
 
 const money = (n: number) => (n >= 1000 ? `$${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : `$${n}`)
 
@@ -12,12 +13,13 @@ export default function PipelineClient() {
   const { leads, isLoading, setStage, patch } = useLeads()
   const [scope, setScope] = useState<'warm' | 'all'>('warm')
   const [dragId, setDragId] = useState<string | null>(null)
+  const team = useTeam()
   const [over, setOver] = useState<Stage | null>(null)
 
   // "New" would hold thousands of cold contacts, so it only ever shows warm leads.
   const board = leads.filter(l => (l.stage === 'new' ? isWarm(l) : scope === 'all' || isWarm(l) || l.source !== 'apollo'))
   const by = (s: Stage) => board.filter(l => l.stage === s)
-  const openValue = board.filter(l => !['won', 'completed', 'lost'].includes(l.stage)).reduce((t, l) => t + (l.deal_value || 0), 0)
+  const openValue = board.filter(l => !isClosed(l.stage)).reduce((t, l) => t + (l.deal_value || 0), 0)
   const wonValue = board.filter(l => ['won', 'completed'].includes(l.stage)).reduce((t, l) => t + (l.deal_value || 0), 0)
 
   function drop(stage: Stage) {
@@ -38,7 +40,7 @@ export default function PipelineClient() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
         <div>
           <h1 style={h1}>Pipeline</h1>
-          <p style={sub}>Drag a card to move it to another stage. Click the amount to set the deal value.</p>
+          <p style={sub}>Drag a card to move it to another stage; dropping on Lost or Unqualified asks for the reason. Click the amount to set the deal value.</p>
         </div>
         <div style={{ display: 'flex', gap: 18, alignItems: 'center' }}>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Open <b style={{ color: '#F59E0B', fontSize: 15 }}>{money(openValue)}</b></div>
@@ -79,9 +81,13 @@ export default function PipelineClient() {
                       background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '10px 11px',
                       cursor: 'grab', opacity: dragId === l.id ? 0.4 : 1,
                     }}>
-                    <Link href={`/leads/${l.id}`} draggable={false} style={{ textDecoration: 'none', color: 'inherit', fontWeight: 600, fontSize: 13, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {fullName(l)}
-                    </Link>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                      <OwnerChip id={l.assigned_to} team={team} />
+                      <Link href={`/leads/${l.id}`} draggable={false} style={{ textDecoration: 'none', color: 'inherit', fontWeight: 600, fontSize: 13, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {fullName(l)}
+                      </Link>
+                    </div>
+                    {(l.stage === 'lost' || l.stage === 'unqualified') && l.lost_reason && <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>{l.lost_reason}</div>}
                     {l.company && <div style={{ fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{l.company}</div>}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, gap: 6 }}>
                       <ChannelPill lead={l} />

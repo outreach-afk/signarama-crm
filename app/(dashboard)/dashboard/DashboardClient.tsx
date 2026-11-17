@@ -30,9 +30,9 @@ function daysAgo(d: string) {
 
 const STAGE_COLORS: Record<string, string> = {
   new: '#64748B', contacted: '#3B82F6', quoted: '#8B5CF6',
-  negotiating: '#F59E0B', won: '#10B981', completed: '#34D399', lost: '#EF4444',
+  negotiating: '#F59E0B', won: '#10B981', completed: '#34D399', lost: '#EF4444', unqualified: '#A8A29E',
 }
-const STAGES = ['new', 'contacted', 'quoted', 'negotiating', 'won', 'completed', 'lost']
+const STAGES = ['new', 'contacted', 'quoted', 'negotiating', 'won', 'completed', 'lost', 'unqualified']
 
 // ── animated counter hook ─────────────────────────────────────────────────────
 
@@ -243,7 +243,7 @@ export default function DashboardClient() {
 
   // Stats
   const total = leads.length
-  const active = leads.filter(l => !['won', 'completed', 'lost'].includes(l.stage)).length
+  const active = leads.filter(l => !['won', 'completed', 'lost', 'unqualified'].includes(l.stage)).length
   const pipeline = leads.reduce((s, l) => s + (l.deal_value || 0), 0)
   const won = leads.filter(l => ['won', 'completed'].includes(l.stage)).length
   const fromRevscale = leads.filter(l => l.source === 'revscale').length
@@ -256,7 +256,7 @@ export default function DashboardClient() {
 
   const overdue = leads.filter(l =>
     l.next_step_due && new Date(l.next_step_due) < new Date() &&
-    !['won', 'completed', 'lost'].includes(l.stage)
+    !['won', 'completed', 'lost', 'unqualified'].includes(l.stage)
   )
   // Lead with what matters: the newest warm leads, not whatever was imported last.
   const warm = leads.filter(l => l.source === 'revscale' && ['web_pixel', 'inquiry'].includes(l.source_subtype || ''))

@@ -84,7 +84,7 @@ export type FollowUp = {
 }
 
 export function cadenceFor(l: LeadLike): Cadence | null {
-  if (['won', 'completed', 'lost'].includes(l.stage)) return null
+  if (['won', 'completed', 'lost', 'unqualified'].includes(l.stage)) return null
   if (l.stage === 'quoted' || l.stage === 'negotiating') return CADENCES.quoted
   if (l.source_subtype === 'inquiry') return CADENCES.inquiry
   if (l.source_subtype === 'web_pixel') return CADENCES.web_pixel
@@ -93,6 +93,34 @@ export function cadenceFor(l: LeadLike): Cadence | null {
 }
 
 const isTouch = (t: string): t is TouchType => t === 'call' || t === 'email' || t === 'sms'
+const dayKey = (iso: string) => { const d = new Date(iso); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` }
+
+/**
+ * How many cadence steps are done. Each touch completes the next step, except a second channel
+ * used on the same day for a step that asks for both ("call, then email") — that belongs to the same step.
+ */
+export function stepsDone(cadence: Cadence, touches: TouchLike[]) {
+  let done = 0
+  let open: { types: Set<string>; day: string } | null = null
+  for (const t of touches) {
+    const prev = done > 0 ? cadence.steps[done - 1] : null
+    if (open && prev && prev.do.includes(t.type as TouchType) && !open.types.has(t.type) && dayKey(t.created_at) === open.day) {
+      open.types.add(t.type)
+      continue
+    }
+    done++
+    open = { types: new Set([t.type]), day: dayKey(t.created_at) }
+  }
+  return done
+}
+
+/** Touches that count toward the current cadence (a move to Quoted restarts the count). */
+export function cadenceTouches(l: LeadLike, acts: TouchLike[]) {
+  const mine = acts.filter(a => isTouch(a.type)).sort((a, b) => a.created_at.localeCompare(b.created_at))
+  const stageStart = l.stage === 'quoted' || l.stage === 'negotiating'
+    ? acts.filter(a => a.type === 'stage_change').map(a => a.created_at).sort().pop() || null : null
+  return { counted: stageStart ? mine.filter(a => a.created_at >= stageStart) : mine, stageStart }
+}
 const startOfDay = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime() }
 
 export function followUp(l: LeadLike, acts: TouchLike[], now = Date.now()): FollowUp | null {
@@ -118,12 +146,10 @@ export function followUp(l: LeadLike, acts: TouchLike[], now = Date.now()): Foll
 
   // Quote cadence counts touches made since the lead was last touched before quoting — keep it simple:
   // steps advance with every logged touch; a stage change to quoted restarts at step 1.
-  const stageStart = l.stage === 'quoted' || l.stage === 'negotiating'
-    ? acts.filter(a => a.type === 'stage_change').map(a => a.created_at).sort().pop() || null : null
-  const counted = stageStart ? mine.filter(a => a.created_at >= stageStart) : mine
+  const { counted, stageStart } = cadenceTouches(l, acts)
   const anchor = counted.length ? new Date(counted[counted.length - 1].created_at).getTime()
     : stageStart ? new Date(stageStart).getTime() : created
-  const i = counted.length
+  const i = stepsDone(cadence, counted)
 
   if (!counted.length && !stageStart && now - created > FRESH_DAYS * DAY) {
     return { ...base, stepIndex: 0, step: cadence.steps[0], dueAt: null, state: 'backlog', label: 'Never contacted — re-engage or close', daysOverdue: 0 }

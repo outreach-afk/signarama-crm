@@ -1,13 +1,15 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
-import { Phone, ChevronDown, ChevronRight, Clock, ExternalLink } from 'lucide-react'
+import { Phone, ChevronDown, ChevronRight, Clock, ExternalLink, ArrowRightLeft, Check } from 'lucide-react'
 import type { Lead } from '@/types/database'
 import { fullName, sentiment, timeAgo } from '@/lib/leads'
 import { urgency, type FollowUp } from '@/lib/cadence'
 import {
-  ChannelPill, DUE_COLOR, LogTouch, Pill, card, dueText, h1, hasTag, sub, useFollowUps, useLeads,
+  ChannelPill, DUE_COLOR, LogTouch, OwnerChip, Pill, card, dueText, h1, hasTag, requestClose, requestHandoff, sub, useFollowUps, useLeads, useTeam,
 } from '@/components/LeadBits'
 
 const DAY = 86_400_000
@@ -25,11 +27,46 @@ export default function TodayClient() {
   const [openScript, setOpenScript] = useState<string | null>(null)
   const [showSoon, setShowSoon] = useState(false)
   const [limit, setLimit] = useState(30)
+  const team = useTeam()
+  const supabase = useMemo(() => createClient(), [])
+
+  // Whose list: default to mine when I own open leads, otherwise everyone's.
+  const [ownerPick, setOwnerPick] = useState<'mine' | 'unassigned' | 'everyone' | null>(null)
+  const ownsAny = !!team.me && leads.some(l => l.assigned_to === team.me && followUps.has(l.id))
+  const owner = ownerPick ?? (ownsAny ? 'mine' : 'everyone')
+  const inScope = (l: Lead, who = owner) => who === 'everyone' || (who === 'mine' ? l.assigned_to === team.me : !l.assigned_to)
+
+  const handedToMe = useMemo(() => leads.filter(l => !!team.me && l.assigned_to === team.me && hasTag(l, 'handoff_new')), [leads, team.me])
+  const handoffIds = handedToMe.map(l => l.id).join(',')
+  const { data: handoffNotes = {} } = useQuery({
+    queryKey: ['handoff-notes', handoffIds],
+    enabled: handedToMe.length > 0,
+    queryFn: async () => {
+      const { data } = await supabase.from('activities').select('lead_id, body, created_at').eq('type', 'handoff')
+        .in('lead_id', handoffIds.split(',')).order('created_at', { ascending: false })
+      const m: Record<string, { body: string | null; created_at: string }> = {}
+      for (const a of (data || []) as { lead_id: string; body: string | null; created_at: string }[]) if (!m[a.lead_id]) m[a.lead_id] = a
+      return m
+    },
+  })
+
+  const counts = useMemo(() => {
+    const c = { mine: 0, unassigned: 0, everyone: 0 }
+    for (const l of leads) {
+      const f = followUps.get(l.id)
+      if (!f || !(f.state === 'overdue' || f.state === 'due')) continue
+      c.everyone++
+      if (team.me && l.assigned_to === team.me) c.mine++
+      if (!l.assigned_to) c.unassigned++
+    }
+    return c
+  }, [leads, followUps, team.me])
 
   const { now, soon, backlog, replies } = useMemo(() => {
     const now: { l: Lead; f: FollowUp }[] = [], soon: { l: Lead; f: FollowUp }[] = [], backlog: Lead[] = []
     const t = Date.now()
     for (const l of leads) {
+      if (!inScope(l)) continue
       const f = followUps.get(l.id)
       if (!f) continue
       if (f.state === 'overdue' || f.state === 'due') now.push({ l, f })
@@ -39,9 +76,12 @@ export default function TodayClient() {
     now.sort((a, b) => urgency(b.l, b.f) - urgency(a.l, a.f) || (a.f.dueAt || 0) - (b.f.dueAt || 0))
     soon.sort((a, b) => (a.f.dueAt || 0) - (b.f.dueAt || 0))
     const inNow = new Set(now.map(x => x.l.id))
-    const replies = leads.filter(l => l.source === 'revscale' && hasTag(l, 'rs:replied') && l.stage === 'new' && sentiment(l)?.tone !== 'negative' && !inNow.has(l.id))
+    const replies = leads.filter(l => inScope(l) && l.source === 'revscale' && hasTag(l, 'rs:replied') && l.stage === 'new' && sentiment(l)?.tone !== 'negative' && !inNow.has(l.id))
     return { now, soon, backlog, replies }
-  }, [leads, followUps])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leads, followUps, owner, team.me])
+
+  const canHandOff = (l: Lead) => team.ready && l.assigned_to === team.settings.opener && l.assigned_to !== team.settings.closer
 
   const snooze = (l: Lead, days: number, f: FollowUp) =>
     patch(l, { next_step_due: new Date(Date.now() + days * DAY).toISOString(), next_step: l.next_step || f.label })
@@ -55,6 +95,7 @@ export default function TodayClient() {
         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 280 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <OwnerChip id={l.assigned_to} team={team} />
               <Link href={`/leads/${l.id}`} style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)', textDecoration: 'none' }}>{fullName(l)}</Link>
               {l.company && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{l.company}</span>}
               <ChannelPill lead={l} />
@@ -79,13 +120,19 @@ export default function TodayClient() {
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
             {l.phone && <a href={`tel:${l.phone}`} style={btn('#10B981')}><Phone size={12} /> Call</a>}
             <LogTouch compact onLog={(type, outcome) => logTouch(l, type, outcome)} />
-            <select value="" onChange={e => { if (e.target.value === 'lost') setStage(l, 'lost'); else if (e.target.value) snooze(l, Number(e.target.value), f) }}
+            {canHandOff(l) && (
+              <button onClick={() => requestHandoff(l, 'Handed off early', false)} style={{ ...btn('#F59E0B'), cursor: 'pointer' }} title={`Pass this lead to ${team.name(team.settings.closer)} now`}>
+                <ArrowRightLeft size={12} /> Hand off
+              </button>
+            )}
+            <select value="" onChange={e => { const v = e.target.value; if (v === 'lost' || v === 'unqualified') requestClose(l, v); else if (v) snooze(l, Number(v), f) }}
               style={{ ...btn('#64748B'), cursor: 'pointer', appearance: 'none', outline: 'none' }} title="Push this follow-up back, or close the lead">
               <option value="">Later ▾</option>
               <option value="1">Tomorrow</option>
               <option value="3">In 3 days</option>
               <option value="7">Next week</option>
-              <option value="lost">Not a real lead</option>
+              <option value="unqualified">Unqualified…</option>
+              <option value="lost">Lost…</option>
             </select>
             <Link href={`/leads/${l.id}`} style={btn('#3B82F6')}><ExternalLink size={12} /> Open</Link>
           </div>
@@ -101,12 +148,58 @@ export default function TodayClient() {
         <div>
           <h1 style={h1}>Today</h1>
           <p style={sub}>
-            {isLoading ? 'Loading…' : now.length === 0 ? 'Nothing due. Every active lead has had its follow-up.' :
+            {isLoading ? 'Loading…' : now.length === 0 ? (owner === 'mine' ? 'Nothing due on your leads.' : 'Nothing due. Every active lead has had its follow-up.') :
               `${now.length} follow-up${now.length === 1 ? '' : 's'} to do${overdue ? `, ${overdue} overdue` : ''}. Work from the top: the order is by urgency.`}
           </p>
         </div>
-        <Link href="/playbook" style={{ ...btn('#F59E0B'), padding: '9px 14px', fontSize: 13 }}>Follow-up playbook</Link>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 9, overflow: 'hidden' }}>
+            {(['mine', 'unassigned', 'everyone'] as const).map(k => (
+              <button key={k} onClick={() => setOwnerPick(k)} style={{
+                padding: '7px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', border: 'none',
+                background: owner === k ? 'var(--primary)' : 'transparent', color: owner === k ? '#fff' : 'var(--text-secondary)',
+              }}>
+                {k === 'mine' ? 'Mine' : k === 'unassigned' ? 'No owner' : 'Everyone'} <span style={{ opacity: 0.8, fontVariantNumeric: 'tabular-nums' }}>{counts[k]}</span>
+              </button>
+            ))}
+          </span>
+          <Link href="/playbook" style={{ ...btn('#F59E0B'), padding: '9px 14px', fontSize: 13 }}>Follow-up playbook</Link>
+        </div>
       </div>
+
+      {handedToMe.length > 0 && (
+        <div style={{ ...card, marginBottom: 20, overflow: 'visible', borderColor: 'rgba(245,158,11,0.45)' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', borderLeft: '3px solid #F59E0B', borderRadius: '12px 12px 0 0', background: 'rgba(245,158,11,0.06)' }}>
+            <div style={{ fontWeight: 700, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <ArrowRightLeft size={15} color="#F59E0B" /> Handed to you <span style={{ color: '#F59E0B' }}>{handedToMe.length}</span>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>These leads finished the first steps and are now yours. Read the note, then press Got it.</div>
+          </div>
+          {handedToMe.map(l => {
+            const n = handoffNotes[l.id]
+            return (
+              <div key={l.id} style={{ display: 'flex', gap: 14, padding: '14px 20px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1, minWidth: 280 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Link href={`/leads/${l.id}`} style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)', textDecoration: 'none' }}>{fullName(l)}</Link>
+                    {l.company && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{l.company}</span>}
+                    <ChannelPill lead={l} />
+                    {n && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>handed over {timeAgo(n.created_at)}</span>}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 6, whiteSpace: 'pre-wrap', lineHeight: 1.55, maxWidth: 680 }}>
+                    {n?.body || 'Loading the handoff note…'}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {l.phone && <a href={`tel:${l.phone}`} style={btn('#10B981')}><Phone size={12} /> Call</a>}
+                  <Link href={`/leads/${l.id}`} style={btn('#3B82F6')}><ExternalLink size={12} /> Open</Link>
+                  <button onClick={() => patch(l, { tags: (l.tags || []).filter(t => t !== 'handoff_new') })} style={{ ...btn('#F59E0B'), cursor: 'pointer' }}><Check size={12} /> Got it</button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {now.length > 0 && (
         <div style={{ ...card, marginBottom: 20, overflow: 'visible' }}>

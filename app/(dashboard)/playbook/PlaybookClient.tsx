@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { Phone, Mail, MessageSquare } from 'lucide-react'
 import { CADENCES, NURTURE_DAYS, type TouchType } from '@/lib/cadence'
-import { card, h1, sub } from '@/components/LeadBits'
+import { card, h1, sub, useTeam } from '@/components/LeadBits'
 
 const ICON: Record<TouchType, React.ReactNode> = {
   call: <Phone size={13} />, email: <Mail size={13} />, sms: <MessageSquare size={13} />,
@@ -23,6 +23,10 @@ const RULES: [string, string][] = [
 ]
 
 export default function PlaybookClient() {
+  const team = useTeam()
+  const N = team.settings.handoffStep
+  const owner = (cadenceKey: string, i: number) =>
+    !team.ready || !['inquiry', 'web_pixel'].includes(cadenceKey) ? null : i < N ? team.name(team.settings.opener) : team.name(team.settings.closer)
   return (
     <div style={{ padding: 32, maxWidth: 980 }}>
       <h1 style={h1}>Follow-up playbook</h1>
@@ -30,6 +34,17 @@ export default function PlaybookClient() {
         The standard way Signarama Corona follows up a lead. The <Link href="/today" style={{ color: 'var(--primary)' }}>Today</Link> list and the calendar are built from these steps,
         so working that list top to bottom is following this playbook.
       </p>
+
+      {team.ready && (
+        <div style={{ ...card, padding: '16px 22px', marginBottom: 20, borderColor: 'rgba(245,158,11,0.4)' }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Who does what</div>
+          <div style={{ fontSize: 13.5, color: 'var(--text-secondary)', marginTop: 4, lineHeight: 1.6 }}>
+            <b style={{ color: 'var(--text)' }}>{team.name(team.settings.opener)}</b> makes first contact and works steps 1–{N}.
+            After step {N}{team.settings.handoffOnEngage ? ', or as soon as the lead engages,' : ''} the lead is handed to <b style={{ color: 'var(--text)' }}>{team.name(team.settings.closer)}</b> with a short note and moves to their Today list.
+            Log every touch: the handoff happens when step {N} is logged, not before.
+          </div>
+        </div>
+      )}
 
       <div style={{ ...card, padding: '20px 24px', marginBottom: 20 }}>
         <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 14 }}>The rules</div>
@@ -62,7 +77,11 @@ export default function PlaybookClient() {
                     ))}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{i + 1}. {s.title}</div>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>
+                      {i + 1}. {s.title}
+                      {owner(c.key, i) && <span style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: i < N ? '#60A5FA' : '#F59E0B' }}>{owner(c.key, i)}</span>}
+                    </div>
+                    {team.ready && ['inquiry', 'web_pixel'].includes(c.key) && i === N && <div style={{ fontSize: 11.5, color: '#F59E0B', margin: '2px 0 4px' }}>⇄ Handoff happens before this step</div>}
                     <div style={{ color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.55, marginTop: 2 }}>{s.script}</div>
                   </div>
                 </div>

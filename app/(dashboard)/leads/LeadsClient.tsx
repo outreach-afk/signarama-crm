@@ -4,16 +4,18 @@ import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { OwnerChip, requestClose, useTeam } from '@/components/LeadBits'
 import type { Lead, Stage } from '@/types/database'
 import {
   CHANNELS, TAG_IN_SEQUENCE, apolloMatch, fetchAllLeads, fullName, leadChannel,
   revscaleSignals, sentiment, timeAgo, type Channel,
 } from '@/lib/leads'
 
-const STAGES: Stage[] = ['new', 'contacted', 'quoted', 'negotiating', 'won', 'completed', 'lost']
+const STAGES: Stage[] = ['new', 'contacted', 'quoted', 'negotiating', 'won', 'completed', 'lost', 'unqualified']
+const OPEN_STAGES = STAGES.filter(s => s !== 'lost' && s !== 'unqualified')
 const STAGE_COLOR: Record<string, string> = {
   new: '#94A3B8', contacted: '#60A5FA', quoted: '#A78BFA',
-  negotiating: '#FCD34D', won: '#34D399', completed: '#6EE7B7', lost: '#F87171',
+  negotiating: '#FCD34D', won: '#34D399', completed: '#6EE7B7', lost: '#F87171', unqualified: '#A8A29E',
 }
 const TONE_COLOR = { positive: '#34D399', neutral: '#FCD34D', negative: '#F87171' }
 const PAGE = 100
@@ -77,6 +79,8 @@ export default function LeadsClient() {
 
   const [search, setSearch] = useState('')
   const [stageFilter, setStageFilter] = useState<Stage | ''>('')
+  const [ownerFilter, setOwnerFilter] = useState('')
+  const team = useTeam()
   const [onlyApollo, setOnlyApollo] = useState(false)
   const [onlyReplied, setOnlyReplied] = useState(false)
   const [paging, setPaging] = useState({ sig: '', n: PAGE })
@@ -98,7 +102,7 @@ export default function LeadsClient() {
   }, [supabase, qc])
 
   // Paging resets whenever the view or a filter changes.
-  const sig = [view, tabKey, search, stageFilter, onlyApollo, onlyReplied].join('|')
+  const sig = [view, tabKey, search, stageFilter, ownerFilter, onlyApollo, onlyReplied].join('|')
   const shown = paging.sig === sig ? paging.n : PAGE
 
   const inView = useMemo(() => leads.filter(l => view === 'all' || l.source === view), [leads, view])
@@ -124,6 +128,7 @@ export default function LeadsClient() {
     return inView.filter(l => {
       if (!tab.match(l)) return false
       if (stageFilter && l.stage !== stageFilter) return false
+      if (ownerFilter === 'none' ? !!l.assigned_to : ownerFilter && l.assigned_to !== ownerFilter) return false
       if (onlyApollo && !isApolloLinked(l)) return false
       if (onlyReplied && !(l.tags || []).includes('rs:replied')) return false
       if (!q) return true
@@ -142,6 +147,7 @@ export default function LeadsClient() {
   }
 
   async function setStage(lead: Lead, stage: Stage) {
+    if (stage === 'lost' || stage === 'unqualified') { requestClose(lead, stage); return }
     qc.setQueryData<Lead[]>(['leads'], old => (old || []).map(l => (l.id === lead.id ? { ...l, stage } : l)))
     const { error } = await supabase.from('leads').update({ stage } as never).eq('id', lead.id)
     if (error) qc.invalidateQueries({ queryKey: ['leads'] })
@@ -228,6 +234,15 @@ export default function LeadsClient() {
           <option value="">All stages</option>
           {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        {view !== 'apollo' && (
+          <select value={ownerFilter} onChange={e => setOwnerFilter(e.target.value)}
+            style={{ padding: '9px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', fontSize: 13, outline: 'none' }}>
+            <option value="">Any owner</option>
+            {team.me && <option value={team.me}>Mine</option>}
+            {team.profiles.filter(p => p.id !== team.me).map(p => <option key={p.id} value={p.id}>{team.name(p.id)}</option>)}
+            <option value="none">No owner</option>
+          </select>
+        )}
         {[
           { on: onlyApollo, set: setOnlyApollo, label: view === 'apollo' ? `Reached Revscale (${apolloCount})` : `From Apollo outreach (${apolloCount})`, color: '#F59E0B' },
           ...(view !== 'apollo' ? [{ on: onlyReplied, set: setOnlyReplied, label: 'Replied', color: '#34D399' }] : []),
@@ -271,8 +286,11 @@ export default function LeadsClient() {
                   onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-2)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >
-                  <td style={{ padding: '12px 16px', maxWidth: 260 }}>
-                    <div style={{ fontWeight: 500, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fullName(lead)}</div>
+                  <td style={{ padding: '12px 16px', maxWidth: 280 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                      {view !== 'apollo' && <OwnerChip id={lead.assigned_to} team={team} />}
+                      <div style={{ fontWeight: 500, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fullName(lead)}</div>
+                    </div>
                     {lead.email && fullName(lead) !== lead.email && <div style={{ fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.email}</div>}
                     {!lead.email && lead.title && <div style={{ fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.title}</div>}
                   </td>
@@ -345,7 +363,7 @@ export default function LeadsClient() {
               {inp('Phone', 'phone', 'tel')}
               {inp('Company', 'company')}
               {inp('Title', 'title')}
-              {inp('Stage', 'stage', 'text', STAGES)}
+              {inp('Stage', 'stage', 'text', OPEN_STAGES)}
               {inp('Source', 'source', 'text', ['apollo', 'revscale', 'website', 'referral', 'walk_in', 'other'])}
               {inp('Deal Value ($)', 'deal_value', 'number')}
               {inp('Project Type', 'project_type')}

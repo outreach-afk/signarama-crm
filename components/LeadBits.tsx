@@ -4,14 +4,23 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import type { Lead, Stage } from '@/types/database'
-import { CHANNELS, alsoPixel, fetchAllLeads, leadChannel, type Channel } from '@/lib/leads'
-import { followUp, groupTouches, type FollowUp, type TouchLike, type TouchType } from '@/lib/cadence'
+import { CHANNELS, alsoPixel, fetchAllLeads, isClosed, leadChannel, type Channel } from '@/lib/leads'
+import { cadenceFor, cadenceTouches, followUp, groupTouches, stepsDone, type FollowUp, type TouchLike, type TouchType } from '@/lib/cadence'
+import { DEFAULT_TEAM, TEAM_KEY, displayName, initials, type Profile, type TeamSettings } from '@/lib/team'
 
-export const STAGES: Stage[] = ['new', 'contacted', 'quoted', 'negotiating', 'won', 'completed', 'lost']
+export const STAGES: Stage[] = ['new', 'contacted', 'quoted', 'negotiating', 'won', 'completed', 'lost', 'unqualified']
 export const STAGE_COLOR: Record<string, string> = {
   new: '#94A3B8', contacted: '#60A5FA', quoted: '#A78BFA',
-  negotiating: '#FCD34D', won: '#34D399', completed: '#6EE7B7', lost: '#F87171',
+  negotiating: '#FCD34D', won: '#34D399', completed: '#6EE7B7', lost: '#F87171', unqualified: '#A8A29E',
 }
+
+// ── Requests handled by the dialogs mounted once in the layout (components/LeadDialogs.tsx) ──
+export type CloseRequest = { lead: Lead; stage: 'lost' | 'unqualified' }
+export type HandoffRequest = { lead: Lead; reason: string; auto: boolean }
+export const requestClose = (lead: Lead, stage: 'lost' | 'unqualified') =>
+  window.dispatchEvent(new CustomEvent<CloseRequest>('crm:close-lead', { detail: { lead, stage } }))
+export const requestHandoff = (lead: Lead, reason: string, auto = false) =>
+  window.dispatchEvent(new CustomEvent<HandoffRequest>('crm:handoff-lead', { detail: { lead, reason, auto } }))
 
 export const isWarm = (l: Lead) => l.source === 'revscale' && ['web_pixel', 'inquiry'].includes(l.source_subtype || '')
 export const hasTag = (l: Lead, t: string) => (l.tags || []).includes(t)
@@ -61,8 +70,17 @@ export function useLeads() {
     if (note) await supabase.from('activities').insert([{ lead_id: lead.id, type: 'stage_change', body: note }] as never)
     return true
   }
-  const setStage = (lead: Lead, stage: Stage) =>
-    lead.stage === stage ? Promise.resolve(true) : patch(lead, { stage }, `Stage changed from ${lead.stage} → ${stage}`)
+  const team = useTeam()
+  async function setStage(lead: Lead, stage: Stage) {
+    if (lead.stage === stage) return true
+    // Closing asks for a reason first; the dialog does the update.
+    if (stage === 'lost' || stage === 'unqualified') { requestClose(lead, stage); return false }
+    const changes: Partial<Lead> = { stage }
+    if (isClosed(lead.stage) && lead.lost_reason) changes.lost_reason = null // reopened
+    const ok = await patch(lead, changes, `Stage changed from ${lead.stage} → ${stage}`)
+    if (ok && (stage === 'quoted' || stage === 'negotiating')) maybeHandoff({ ...lead, ...changes }, team.settings, `Moved to ${stage}`, true)
+    return ok
+  }
 
   return { leads: query.data || [], isLoading: query.isLoading, patch, setStage }
 }
@@ -75,13 +93,14 @@ export const sub: React.CSSProperties = { color: 'var(--text-secondary)', fontSi
 export function useFollowUps(leads: Lead[]) {
   const supabase = useMemo(() => createClient(), [])
   const qc = useQueryClient()
+  const team = useTeam()
   const { data: acts = [] } = useQuery({
     queryKey: ['touches'],
     queryFn: async () => {
       const out: TouchLike[] = []
       for (let from = 0; ; from += 1000) {
-        const { data, error } = await supabase.from('activities').select('lead_id, type, created_at, outcome')
-          .in('type', ['call', 'email', 'sms', 'stage_change']).order('created_at').range(from, from + 999)
+        const { data, error } = await supabase.from('activities').select('lead_id, type, created_at, outcome, user_id')
+          .in('type', ['call', 'email', 'sms', 'stage_change', 'handoff']).order('created_at').range(from, from + 999)
         if (error) throw error
         out.push(...(data as TouchLike[]))
         if (!data || data.length < 1000) break
@@ -121,10 +140,13 @@ export function useFollowUps(leads: Lead[]) {
       await supabase.from('leads').update(changes as never).eq('id', lead.id)
       qc.invalidateQueries({ queryKey: ['lead', lead.id] })
     }
+    const after = { ...lead, ...changes }
+    const acts = (qc.getQueryData<TouchLike[]>(['touches']) || []).filter(a => a.lead_id === lead.id)
+    maybeHandoff(after, team.settings, null, type === 'call' && outcome === 'Spoke with them', acts)
     return true
   }
 
-  return { followUps: map, logTouch }
+  return { followUps: map, logTouch, acts: acts as (TouchLike & { user_id?: string | null })[] }
 }
 
 export const CALL_OUTCOMES = ['Spoke with them', 'Left voicemail', 'No answer', 'Wrong number']
@@ -165,4 +187,61 @@ export function dueText(f: FollowUp) {
 }
 export const DUE_COLOR: Record<FollowUp['state'], string> = {
   overdue: '#EF4444', due: '#F59E0B', upcoming: '#64748B', manual: '#64748B', nurture: '#64748B', backlog: '#94A3B8', closed: '#64748B',
+}
+
+// ── Team: who is on the CRM, who opens and who closes ─────────────────────────
+
+export function useTeam() {
+  const supabase = useMemo(() => createClient(), [])
+  const { data } = useQuery({
+    queryKey: ['team'],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const [p, s, u] = await Promise.all([
+        supabase.from('profiles').select('id, full_name, email, role').order('created_at'),
+        supabase.from('app_settings').select('value').eq('key', TEAM_KEY).maybeSingle(),
+        supabase.auth.getUser(),
+      ])
+      return {
+        profiles: (p.data || []) as Profile[],
+        settings: { ...DEFAULT_TEAM, ...(((s.data as { value?: Partial<TeamSettings> } | null)?.value) || {}) },
+        me: u.data.user?.id || null,
+      }
+    },
+  })
+  const profiles = data?.profiles || []
+  const byId = new Map(profiles.map(p => [p.id, p]))
+  const settings = data?.settings || DEFAULT_TEAM
+  return {
+    profiles, settings, me: data?.me || null, byId,
+    name: (id: string | null | undefined) => (id ? displayName(byId.get(id)) : 'Unassigned'),
+    ready: !!(settings.opener && settings.closer),
+  }
+}
+
+/**
+ * Hand a lead from the opener to the closer when it reaches the agreed step
+ * (or engages, if that option is on). Opens the handoff dialog; does nothing for anyone else's leads.
+ */
+export function maybeHandoff(lead: Lead, team: TeamSettings, reason: string | null, engaged: boolean, acts?: TouchLike[]) {
+  if (!team.opener || !team.closer || lead.assigned_to !== team.opener || isClosed(lead.stage)) return
+  if (engaged && team.handoffOnEngage) { requestHandoff(lead, reason || 'They engaged: spoke with them', true); return }
+  const cadence = cadenceFor(lead)
+  if (!cadence || !acts || !['inquiry', 'web_pixel'].includes(cadence.key)) return
+  const done = stepsDone(cadence, cadenceTouches(lead, acts).counted)
+  if (done >= team.handoffStep) requestHandoff(lead, `Step ${team.handoffStep} done`, true)
+}
+
+export function OwnerChip({ id, team, title }: { id: string | null; team: ReturnType<typeof useTeam>; title?: string }) {
+  const p = id ? team.byId.get(id) : null
+  const mine = !!id && id === team.me
+  return (
+    <span title={title || (p ? `Owner: ${displayName(p)}` : 'No owner')} style={{
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 22, height: 22, padding: '0 6px', borderRadius: 99,
+      fontSize: 10, fontWeight: 800, letterSpacing: '0.02em', flexShrink: 0,
+      background: p ? (mine ? 'rgba(59,130,246,0.22)' : 'rgba(255,255,255,0.08)') : 'transparent',
+      color: p ? (mine ? '#93C5FD' : 'var(--text-secondary)') : 'var(--text-muted)',
+      border: `1px ${p ? 'solid' : 'dashed'} ${p ? 'transparent' : 'var(--border-strong)'}`,
+    }}>{p ? initials(p) : '—'}</span>
+  )
 }

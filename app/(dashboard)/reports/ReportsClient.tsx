@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from 'react'
 import type { Lead } from '@/types/database'
-import { CHANNELS, alsoPixel, apolloMatch, inquiryAt } from '@/lib/leads'
-import { card, h1, hasTag, isWarm, sub, useLeads } from '@/components/LeadBits'
+import { CHANNELS, CLOSE_REASONS, alsoPixel, apolloMatch, inquiryAt } from '@/lib/leads'
+import { DUE_COLOR, card, h1, hasTag, isWarm, sub, useFollowUps, useLeads, useTeam } from '@/components/LeadBits'
 
 const WEEK = 7 * 86_400_000
 const WEEKS = 8
@@ -70,12 +70,52 @@ export default function ReportsClient() {
     ]
     return groups.map(g => {
       const ls = leads.filter(g.match)
-      const worked = ls.filter(l => l.stage !== 'new').length
-      const quoted = ls.filter(l => ['quoted', 'negotiating', 'won', 'completed'].includes(l.stage)).length
-      const won = ls.filter(l => ['won', 'completed'].includes(l.stage))
-      return { ...g, total: ls.length, worked, quoted, won: won.length, revenue: won.reduce((t, l) => t + (l.deal_value || 0), 0) }
+      const unq = ls.filter(l => l.stage === 'unqualified').length
+      const real = ls.filter(l => l.stage !== 'unqualified') // rates are measured on real opportunities only
+      const worked = real.filter(l => l.stage !== 'new').length
+      const quoted = real.filter(l => ['quoted', 'negotiating', 'won', 'completed'].includes(l.stage)).length
+      const won = real.filter(l => ['won', 'completed'].includes(l.stage))
+      const lost = real.filter(l => l.stage === 'lost').length
+      return { ...g, total: ls.length, unq, real: real.length, worked, quoted, won: won.length, lost, revenue: won.reduce((t, l) => t + (l.deal_value || 0), 0) }
     })
   }, [leads])
+
+  // Why leads close
+  const reasons = useMemo(() => {
+    const out = { lost: new Map<string, number>(), unqualified: new Map<string, number>() }
+    for (const l of leads) {
+      if (l.stage !== 'lost' && l.stage !== 'unqualified') continue
+      const key = !l.lost_reason ? 'No reason recorded' : l.lost_reason.startsWith('Other: ') ? 'Other' : l.lost_reason
+      out[l.stage].set(key, (out[l.stage].get(key) || 0) + 1)
+    }
+    const order = (stage: 'lost' | 'unqualified') => {
+      const known = CLOSE_REASONS[stage].map(r => r.label)
+      return [...out[stage].entries()].sort((x, y) => y[1] - x[1] || known.indexOf(x[0]) - known.indexOf(y[0]))
+    }
+    return { lost: order('lost'), unqualified: order('unqualified') }
+  }, [leads])
+
+  // Team: who owns what and who is doing the follow-ups
+  const team = useTeam()
+  const { followUps, acts } = useFollowUps(leads)
+  const teamRows = useMemo(() => {
+    const weekAgo = new Date(now - WEEK).toISOString()
+    const ids = [...team.profiles.map(p => p.id), null]
+    return ids.map(id => {
+      const owned = leads.filter(l => (l.assigned_to || null) === id && followUps.has(l.id))
+      const states = owned.map(l => followUps.get(l.id)!.state)
+      const mine = acts.filter(a => (a.user_id || null) === id && a.created_at >= weekAgo)
+      return {
+        id, name: id ? team.name(id) : 'No owner',
+        role: id && id === team.settings.opener ? 'Opener' : id && id === team.settings.closer ? 'Closer' : '',
+        open: owned.length,
+        due: states.filter(s => s === 'due').length,
+        overdue: states.filter(s => s === 'overdue').length,
+        touches: id ? mine.filter(a => ['call', 'email', 'sms'].includes(a.type)).length : null,
+        handoffs: id ? mine.filter(a => a.type === 'handoff').length : null,
+      }
+    }).filter(r => r.id || r.open)
+  }, [leads, followUps, acts, team.profiles, team.settings, now]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const label = period === 'week' ? dayLabel : monthLabel
   const max = Math.max(1, ...weeks.map(w => w.pixel + w.inquiry))
@@ -183,16 +223,70 @@ export default function ReportsClient() {
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
           <thead><tr style={{ borderBottom: '1px solid var(--border)' }}>
-            <th style={{ ...th, textAlign: 'left' }}>Channel</th><th style={th}>Leads</th><th style={th}>Worked</th><th style={th}>Quoted+</th><th style={th}>Won</th><th style={th}>Revenue</th>
+            <th style={{ ...th, textAlign: 'left' }}>Channel</th><th style={th}>Leads</th><th style={th}>Unqualified</th><th style={th}>Worked</th><th style={th}>Quoted+</th><th style={th}>Won</th><th style={th}>Lost</th><th style={th}>Revenue</th>
           </tr></thead>
           <tbody>
             {channels.map(c => (
               <tr key={c.key} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ ...td, textAlign: 'left' }}><i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: c.color, marginRight: 8 }} />{c.name}</td>
                 <td style={td}>{c.total.toLocaleString()}</td>
-                <td style={td}>{c.worked}{c.total ? ` (${Math.round((c.worked / c.total) * 100)}%)` : ''}</td>
-                <td style={td}>{c.quoted}</td><td style={td}>{c.won}</td>
+                <td style={{ ...td, color: c.unq ? 'var(--text)' : 'var(--text-muted)' }}>{c.unq}</td>
+                <td style={td}>{c.worked}{c.real ? ` (${Math.round((c.worked / c.real) * 100)}%)` : ''}</td>
+                <td style={td}>{c.quoted}</td><td style={td}>{c.won}</td><td style={td}>{c.lost}</td>
                 <td style={td}>{c.revenue ? `$${c.revenue.toLocaleString()}` : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+                </table>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 20, marginTop: 20 }}>
+        {(['lost', 'unqualified'] as const).map(stage => {
+          const rows = reasons[stage]
+          const total = rows.reduce((t, [, n]) => t + n, 0)
+          const max = Math.max(1, ...rows.map(([, n]) => n))
+          return (
+            <div key={stage} style={{ ...card, padding: '18px 22px' }}>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>{stage === 'lost' ? 'Why we lose jobs' : 'Why leads are unqualified'} <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text-secondary)' }}>· {total} all time</span></div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '3px 0 14px' }}>
+                {stage === 'lost' ? 'Real opportunities that did not close.' : 'Inquiries that were never a fit. A large "we don\u2019t offer this" share means the website or the inquiry form attracts the wrong requests.'}
+              </div>
+              {rows.length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Nothing yet. Reasons appear here once leads are closed with the new picker.</div>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                {rows.map(([label, n]) => (
+                  <div key={label}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+                      <span style={{ color: label === 'No reason recorded' ? 'var(--text-muted)' : 'var(--text)' }}>{label}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-secondary)' }}>{n} · {Math.round((n / total) * 100)}%</span>
+                    </div>
+                    <div style={{ height: 6, borderRadius: 4, background: 'var(--surface-2)' }}>
+                      <div style={{ width: `${(n / max) * 100}%`, height: '100%', borderRadius: 4, background: label === 'No reason recorded' ? '#475569' : stage === 'lost' ? '#EF4444' : '#A8A29E' }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      <div style={{ ...card, marginTop: 20, overflowX: 'auto' }}>
+        <div style={{ padding: '16px 20px 6px', fontWeight: 700, fontSize: 15 }}>
+          Team <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text-secondary)' }}>· open warm leads by owner, and calls, emails and texts logged in the last 7 days</span>
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
+          <thead><tr style={{ borderBottom: '1px solid var(--border)' }}>
+            <th style={{ ...th, textAlign: 'left' }}>Person</th><th style={th}>Open leads</th><th style={th}>Due today</th><th style={th}>Overdue</th><th style={th}>Touches (7d)</th><th style={th}>Handoffs (7d)</th>
+          </tr></thead>
+          <tbody>
+            {teamRows.map(r => (
+              <tr key={r.id || 'none'} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={{ ...td, textAlign: 'left' }}>{r.name}{r.role && <span style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 700, color: r.role === 'Opener' ? '#60A5FA' : '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{r.role}</span>}</td>
+                <td style={td}>{r.open}</td>
+                <td style={{ ...td, color: r.due ? DUE_COLOR.due : 'var(--text-muted)' }}>{r.due}</td>
+                <td style={{ ...td, color: r.overdue ? DUE_COLOR.overdue : 'var(--text-muted)' }}>{r.overdue}</td>
+                <td style={td}>{r.touches ?? '—'}</td>
+                <td style={td}>{r.handoffs ?? '—'}</td>
               </tr>
             ))}
           </tbody>

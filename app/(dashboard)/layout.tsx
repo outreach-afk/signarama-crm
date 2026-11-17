@@ -1,6 +1,7 @@
 import { Suspense } from 'react'
 import DashboardNav from '@/components/DashboardNav'
 import CommandPalette from '@/components/CommandPalette'
+import LeadDialogs from '@/components/LeadDialogs'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -16,6 +17,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {children}
       </main>
       <CommandPalette />
+      <LeadDialogs />
     </div>
   )
 }

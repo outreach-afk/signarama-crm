@@ -1,6 +1,6 @@
-export type Stage = 'new' | 'contacted' | 'quoted' | 'negotiating' | 'won' | 'completed' | 'lost'
+export type Stage = 'new' | 'contacted' | 'quoted' | 'negotiating' | 'won' | 'completed' | 'lost' | 'unqualified'
 export type Source = 'apollo' | 'revscale' | 'website' | 'referral' | 'walk_in' | 'other'
-export type ActivityType = 'call' | 'email' | 'sms' | 'note' | 'stage_change' | 'visit'
+export type ActivityType = 'call' | 'email' | 'sms' | 'note' | 'stage_change' | 'visit' | 'handoff'
 
 export interface Lead {
   id: string

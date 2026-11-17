@@ -10,11 +10,11 @@ import {
 } from 'lucide-react'
 
 type Item = { href: string; label: string; icon: LucideIcon; count?: keyof Counts; child?: boolean; section?: string }
-type Counts = { web_pixel: number; inquiry: number; apollo: number; warm: number }
+type Counts = { web_pixel: number; inquiry: number; apollo: number; warm: number; handoffs: number }
 
 const NAV: Item[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/today', label: 'Today', icon: ListChecks, section: 'Follow-up' },
+  { href: '/today', label: 'Today', icon: ListChecks, count: 'handoffs', section: 'Follow-up' },
   { href: '/calendar', label: 'Calendar', icon: CalendarDays },
   { href: '/pipeline', label: 'Pipeline', icon: KanbanSquare },
   { href: '/playbook', label: 'Playbook', icon: BookOpen },
@@ -46,12 +46,14 @@ export default function DashboardNav() {
     const supabase = createClient()
     const n = (q: PromiseLike<{ count: number | null }>) => Promise.resolve(q).then(r => r.count ?? 0)
     const head = () => supabase.from('leads').select('id', { count: 'exact', head: true })
+    let me: string | null = null
+    supabase.auth.getUser().then(({ data }) => { me = data.user?.id || null; load() })
     const load = () => Promise.all([
+      me ? n(head().eq('assigned_to', me).contains('tags', ['handoff_new'])) : Promise.resolve(0),
       n(head().eq('source', 'revscale').eq('source_subtype', 'web_pixel')),
       n(head().eq('source', 'revscale').eq('source_subtype', 'inquiry')),
       n(head().eq('source', 'apollo')),
-    ]).then(([web_pixel, inquiry, apollo]) => setCounts({ web_pixel, inquiry, apollo, warm: web_pixel + inquiry })).catch(() => {})
-    load()
+    ]).then(([handoffs, web_pixel, inquiry, apollo]) => setCounts({ handoffs, web_pixel, inquiry, apollo, warm: web_pixel + inquiry })).catch(() => {})
     const t = setInterval(load, 60_000)
     return () => clearInterval(t)
   }, [])
@@ -101,7 +103,7 @@ export default function DashboardNav() {
               <Link href={href} className={`nav-item${active ? ' active' : ''}${child ? ' child' : ''}`}>
                 <Icon size={child ? 14 : 16} strokeWidth={active ? 2.2 : 1.8} />
                 <span style={{ flex: 1 }}>{label}</span>
-                {n !== undefined && <span className="nav-count">{n.toLocaleString()}</span>}
+                {n !== undefined && (count !== 'handoffs' || n > 0) && <span className={`nav-count${count === 'handoffs' ? ' alert' : ''}`} title={count === 'handoffs' ? 'Leads handed to you' : undefined}>{n.toLocaleString()}</span>}
               </Link>
             </div>
           )

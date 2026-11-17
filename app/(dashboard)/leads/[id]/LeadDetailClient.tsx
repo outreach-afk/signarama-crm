@@ -6,15 +6,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import type { Lead, Activity, Stage } from '@/types/database'
 import { apolloMatch, isMachineTag, revscaleSignals, sentiment } from '@/lib/leads'
-import { ChannelPill, DUE_COLOR, LogTouch, Pill, dueText } from '@/components/LeadBits'
+import { ChannelPill, DUE_COLOR, LogTouch, OwnerChip, Pill, STAGES, STAGE_COLOR, dueText, maybeHandoff, requestClose, requestHandoff, useTeam } from '@/components/LeadBits'
+import { isClosed } from '@/lib/leads'
 import { followUp, type TouchType } from '@/lib/cadence'
-import { Sparkles, Search } from 'lucide-react'
+import { Sparkles, Search, ArrowRightLeft } from 'lucide-react'
 
-const STAGES: Stage[] = ['new', 'contacted', 'quoted', 'negotiating', 'won', 'completed', 'lost']
-const STAGE_COLOR: Record<string, string> = {
-  new: '#94A3B8', contacted: '#60A5FA', quoted: '#A78BFA',
-  negotiating: '#FCD34D', won: '#34D399', completed: '#6EE7B7', lost: '#F87171',
-}
 
 function fullName(l: Lead) {
   return [l.first_name, l.last_name].filter(Boolean).join(' ') || l.email || '(no name)'
@@ -29,7 +25,7 @@ function timeSince(d: string) {
 }
 
 const ACTIVITY_ICONS: Record<string, string> = {
-  call: '📞', email: '✉️', sms: '💬', note: '📝', stage_change: '🔄', visit: '🏢',
+  call: '📞', email: '✉️', sms: '💬', note: '📝', stage_change: '🔄', visit: '🏢', handoff: '🤝',
 }
 
 export default function LeadDetailClient() {
@@ -76,15 +72,20 @@ export default function LeadDetailClient() {
   async function saveLead() {
     if (!lead) return
     setSaving(true)
-    const { error } = await supabase.from('leads').update(editForm as never).eq('id', id)
+    const closing = editForm.stage !== lead.stage && (editForm.stage === 'lost' || editForm.stage === 'unqualified')
+    const form: Partial<Lead> = { ...editForm }
+    if (closing) form.stage = lead.stage // the reason dialog makes the stage change
+    if (form.stage && form.stage !== lead.stage && isClosed(lead.stage) && !isClosed(form.stage)) form.lost_reason = null
+    const { error } = await supabase.from('leads').update(form as never).eq('id', id)
+    if (!error && closing) { qc.invalidateQueries({ queryKey: ['lead', id] }); setEditing(false); setSaving(false); requestClose({ ...lead, ...form } as Lead, editForm.stage as 'lost' | 'unqualified'); return }
     if (!error) {
       qc.invalidateQueries({ queryKey: ['lead', id] })
       setEditing(false)
       // Log stage change if applicable
-      if (editForm.stage !== lead.stage) {
+      if (form.stage !== lead.stage) {
         await supabase.from('activities').insert([{
           lead_id: id, type: 'stage_change',
-          body: `Stage changed from ${lead.stage} → ${editForm.stage}`,
+          body: `Stage changed from ${lead.stage} → ${form.stage}`,
         }] as never)
       }
     }
@@ -116,8 +117,10 @@ export default function LeadDetailClient() {
   const fu = lead ? followUp(lead, activities.map(a => ({ lead_id: a.lead_id, type: a.type, created_at: a.created_at, outcome: a.outcome }))) : null
   const lastOf = (t: TouchType) => activities.find(a => a.type === t)
 
+  const team = useTeam()
   async function logTouch(type: TouchType, outcome: string) {
     if (!lead) return
+    const touchesBefore = activities.map(a => ({ lead_id: a.lead_id, type: a.type, created_at: a.created_at, outcome: a.outcome }))
     const label = type === 'call' ? 'Call' : type === 'email' ? 'Email' : 'SMS'
     await supabase.from('activities').insert([{ lead_id: id, type, body: `${label} — ${outcome}`, outcome }] as never)
     const changes: Partial<Lead> = {}
@@ -125,6 +128,8 @@ export default function LeadDetailClient() {
     if (lead.next_step_due) { changes.next_step_due = null; changes.next_step = null }
     if (Object.keys(changes).length) await supabase.from('leads').update(changes as never).eq('id', id)
     qc.invalidateQueries({ queryKey: ['activities', id] }); qc.invalidateQueries({ queryKey: ['lead', id] }); qc.invalidateQueries({ queryKey: ['touches'] })
+    maybeHandoff({ ...lead, ...changes }, team.settings, null, type === 'call' && outcome === 'Spoke with them',
+      [...touchesBefore, { lead_id: id, type, created_at: new Date().toISOString(), outcome }])
   }
 
   async function snooze(days: number) {
@@ -236,6 +241,9 @@ export default function LeadDetailClient() {
                 {lead.stage}
               </span>
               {lead.deal_value && <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--warning)' }}>${lead.deal_value.toLocaleString()}</span>}
+              {(lead.stage === 'lost' || lead.stage === 'unqualified') && (
+                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>· {lead.lost_reason || 'no reason recorded'}</span>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
               <ChannelPill lead={lead} />
@@ -316,7 +324,7 @@ export default function LeadDetailClient() {
               </>
             ) : (
               <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                {['won', 'completed', 'lost'].includes(lead.stage) ? 'Closed — no follow-up scheduled.' : 'No follow-up sequence for cold leads. Log a touch or move it to Contacted to start one.'}
+                {isClosed(lead.stage) ? 'Closed — no follow-up scheduled.' : 'No follow-up sequence for cold leads. Log a touch or move it to Contacted to start one.'}
               </div>
             )}
           </div>
@@ -334,6 +342,26 @@ export default function LeadDetailClient() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginRight: 6 }}>
+            <OwnerChip id={lead.assigned_to} team={team} />
+            <select value={lead.assigned_to || ''} title="Who owns this lead"
+              onChange={async e => {
+                const v = e.target.value || null
+                await supabase.from('leads').update({ assigned_to: v, tags: (lead.tags || []).filter(t => t !== 'handoff_new') } as never).eq('id', id)
+                await supabase.from('activities').insert([{ lead_id: id, type: 'note', outcome: 'assignment', body: `Owner changed to ${team.name(v)}` }] as never)
+                qc.invalidateQueries({ queryKey: ['lead', id] }); qc.invalidateQueries({ queryKey: ['activities', id] }); qc.invalidateQueries({ queryKey: ['leads'] })
+              }}
+              style={{ padding: '6px 8px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 12, outline: 'none' }}>
+              <option value="">No owner</option>
+              {team.profiles.map(p => <option key={p.id} value={p.id}>{team.name(p.id)}</option>)}
+            </select>
+            {team.ready && lead.assigned_to === team.settings.opener && lead.assigned_to !== team.settings.closer && !isClosed(lead.stage) && (
+              <button onClick={() => requestHandoff(lead, 'Handed off early', false)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer', background: 'rgba(245,158,11,0.12)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.35)' }}>
+                <ArrowRightLeft size={12} /> Hand off to {team.name(team.settings.closer)}
+              </button>
+            )}
+          </span>
           <LogTouch onLog={logTouch} />
           <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>Remind me:</span>
           {[[1, 'Tomorrow'], [3, 'In 3 days'], [7, 'Next week']].map(([d, t]) => (
@@ -407,7 +435,10 @@ export default function LeadDetailClient() {
               <div key={a.id} style={{ display: 'flex', gap: 10 }}>
                 <div style={{ fontSize: 18, flexShrink: 0, marginTop: 2 }}>{ACTIVITY_ICONS[a.type] || '•'}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'capitalize', marginBottom: 2 }}>{a.type.replace('_', ' ')}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: a.type === 'handoff' ? '#F59E0B' : 'var(--text-secondary)', marginBottom: 2 }}>
+                    <span style={{ textTransform: 'capitalize' }}>{a.type === 'stage_change' ? 'Stage' : a.type.replace('_', ' ')}</span>
+                    {a.user_id && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · {team.name(a.user_id)}</span>}
+                  </div>
                   {a.body && <p style={{ fontSize: 13, color: 'var(--text)', whiteSpace: 'pre-wrap', lineHeight: 1.5, marginBottom: 3 }}>{a.body}</p>}
                   <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{timeSince(a.created_at)}</div>
                 </div>
