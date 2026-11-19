@@ -8,7 +8,7 @@ import { enrichLead, FREE_MAIL } from '@/lib/enrich'
 import { sendSms, toE164 } from '@/lib/messaging'
 import { DEFAULT_TEAM, TEAM_KEY, type TeamSettings } from '@/lib/team'
 import {
-  DEFAULT_ROUTING, DM_LABEL, ROUTING_KEY, SIZE_LABEL, decisionMaker, estimate, parseBrief, rangeText, routeFor, type IntakePayload, type RoutingSettings,
+  DEFAULT_ROUTING, DM_LABEL, PRODUCTS, ROUTING_KEY, SIZE_LABEL, decisionMaker, estimate, parseBrief, rangeText, routeFor, type IntakePayload, type RoutingSettings,
 } from '@/lib/opportunity'
 
 type Db = ReturnType<typeof adminDb>
@@ -48,8 +48,10 @@ export async function refreshIntake(db: Db, lead: Row, opts: { org?: Row | null;
   // The qualifier's answers live in the previous brief when this run brought none.
   const intake: IntakePayload = opts.intake || parseBrief(prevBody)
   const facts = await companyFacts(db, lead.id, opts.org)
+  // project_type may hold our own label from an earlier pass: never feed that back into the estimate.
+  const ours = PRODUCTS.some(r => r.label === lead.project_type)
   const est = estimate({
-    product: intake.product || lead.project_type, inquiry: intake.inquiry || inquiryOf(lead), company: lead.company,
+    product: intake.product || (ours ? null : lead.project_type), inquiry: intake.inquiry || inquiryOf(lead), company: lead.company,
     industry: facts.industry, employees: facts.employees, qa: intake.qa,
   }, settings.routing)
   const dm = decisionMaker(lead.title, intake.qa)
@@ -59,7 +61,7 @@ export async function refreshIntake(db: Db, lead: Row, opts: { org?: Row | null;
   if (est.high) tags.push(`est:${est.low}-${est.high}`)
   if (est.rush) tags.push('rush')
   const patch: Row = { tags }
-  if (!lead.project_type && (intake.product || est.product)) patch.project_type = intake.product || est.product
+  if ((!lead.project_type || ours) && (intake.product || est.product) && lead.project_type !== (intake.product || est.product)) patch.project_type = intake.product || est.product
   await db.from('leads').update(patch).eq('id', lead.id)
   Object.assign(lead, patch)
 
