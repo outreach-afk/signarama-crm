@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { Phone, Mail, MessageSquare } from 'lucide-react'
 import { CADENCES, NURTURE_DAYS, type TouchType } from '@/lib/cadence'
-import { card, h1, sub, useTeam } from '@/components/LeadBits'
+import { card, h1, sub, useRouting, useTeam } from '@/components/LeadBits'
 
 const ICON: Record<TouchType, React.ReactNode> = {
   call: <Phone size={13} />, email: <Mail size={13} />, sms: <MessageSquare size={13} />,
@@ -24,6 +24,7 @@ const RULES: [string, string][] = [
 
 export default function PlaybookClient() {
   const team = useTeam()
+  const routing = useRouting()
   const N = team.settings.handoffStep
   const owner = (cadenceKey: string, i: number) =>
     !team.ready ? null : cadenceKey === 'web_pixel' ? team.name(team.settings.closer) : cadenceKey !== 'inquiry' ? null : i < N ? team.name(team.settings.opener) : team.name(team.settings.closer)
@@ -43,6 +44,9 @@ export default function PlaybookClient() {
             After step {N}{team.settings.handoffOnEngage ? ', or as soon as the lead engages,' : ''} the inquiry is handed to {team.name(team.settings.closer)} with a short note and moves to their Today list.
             Log every touch: the handoff happens when step {N} is logged, not before.
             <br /><b style={{ color: 'var(--text)' }}>Web Pixel:</b> {team.name(team.settings.closer)} owns these from the start; there is no handoff.
+            <br /><b style={{ color: 'var(--text)' }}>By job size</b> (new inquiries, Settings → Lead routing): Large jobs go to {routing.large ? team.name(routing.large) : 'the follow-up team'} from the start;
+            small jobs and requests we don&apos;t make stay with {routing.small ? team.name(routing.small) : 'the opener'} with no handoff. Read the <i>Before you call</i> card on the lead first:
+            it shows what they asked for, the size, whether they decide, and what is still unknown.
           </div>
         </div>
       )}
