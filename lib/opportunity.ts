@@ -79,7 +79,11 @@ export function estimate(i: IntakeInput, s: Pick<RoutingSettings, 'largeMin' | '
   if (rule && rule.fit === false) return { size: 'not_a_fit', low: 0, high: 0, product: rule.label, reasons: ['Signarama does not offer this (apparel, promo items or print collateral)'], rush: false }
 
   const locAns = (i.qa || []).find(x => /locations|vehicles/i.test(x.q))?.a || ''
-  const locs = Number((locAns.match(/\b(\d{1,3})\b/) || [])[1]) || (/\b(two|three|four|five|several|multiple)\b/i.test(locAns) ? 3 : 1)
+  // Only count numbers attached to locations or vehicles ("4 vans", "two stores"), not "6 stickers".
+  const UNIT = '(?:locations?|stores?|sites?|shops?|vehicles?|vans?|trucks?|cars?|buildings?|offices?|branches|restaurants?)'
+  const WORDS: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6, several: 3, multiple: 3 }
+  const lm = locAns.match(new RegExp(`\\b(\\d{1,3}|two|three|four|five|six|several|multiple)\\s+(?:\\w+\\s+)?${UNIT}\\b`, 'i'))
+  const locs = lm ? (Number(lm[1]) || WORDS[lm[1].toLowerCase()] || 1) : 1
   if (locs > 1) { const k = Math.min(locs, 6); low *= k; high *= k; reasons.push(`${locs} locations or vehicles`) }
 
   const budgetAns = (i.qa || []).find(x => /budget/i.test(x.q))?.a || ''
