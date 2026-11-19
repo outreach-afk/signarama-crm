@@ -7,6 +7,7 @@ import type { Lead, Stage } from '@/types/database'
 import { CHANNELS, alsoPixel, fetchAllLeads, isClosed, leadChannel, type Channel } from '@/lib/leads'
 import { cadenceFor, cadenceTouches, followUp, groupTouches, stepsDone, type FollowUp, type TouchLike, type TouchType } from '@/lib/cadence'
 import { DEFAULT_TEAM, HANDOFF_CHANNELS, TEAM_KEY, displayName, initials, type Profile, type TeamSettings } from '@/lib/team'
+import { DEFAULT_ROUTING, DM_LABEL, ROUTING_KEY, SIZE_COLOR, SIZE_LABEL, rangeText, routeFor, sizeOf, type RoutingSettings } from '@/lib/opportunity'
 
 export const STAGES: Stage[] = ['new', 'contacted', 'quoted', 'negotiating', 'won', 'completed', 'lost', 'unqualified']
 export const STAGE_COLOR: Record<string, string> = {
@@ -226,6 +227,7 @@ export function useTeam() {
 export function maybeHandoff(lead: Lead, team: TeamSettings, reason: string | null, engaged: boolean, acts?: TouchLike[]) {
   if (!team.opener || !team.closer || lead.assigned_to !== team.opener || isClosed(lead.stage)) return
   if (!HANDOFF_CHANNELS.includes(lead.source_subtype || '')) return
+  if ((lead.tags || []).includes('route:keep')) return // small job: the opener sees it through
   if (engaged && team.handoffOnEngage) { requestHandoff(lead, reason || 'They engaged: spoke with them', true); return }
   const cadence = cadenceFor(lead)
   if (!cadence || !acts || cadence.key !== 'inquiry') return
@@ -244,5 +246,38 @@ export function OwnerChip({ id, team, title }: { id: string | null; team: Return
       color: p ? (mine ? '#93C5FD' : 'var(--text-secondary)') : 'var(--text-muted)',
       border: `1px ${p ? 'solid' : 'dashed'} ${p ? 'transparent' : 'var(--border-strong)'}`,
     }}>{p ? initials(p) : '—'}</span>
+  )
+}
+
+// ── Opportunity size and who should work it ───────────────────────────────────
+
+export function useRouting() {
+  const supabase = useMemo(() => createClient(), [])
+  const { data } = useQuery({
+    queryKey: ['routing'],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data } = await supabase.from('app_settings').select('value').eq('key', ROUTING_KEY).maybeSingle()
+      return { ...DEFAULT_ROUTING, ...(((data as { value?: Partial<RoutingSettings> } | null)?.value) || {}) } as RoutingSettings
+    },
+  })
+  return data || DEFAULT_ROUTING
+}
+
+const DM_COLOR = { yes: '#34D399', likely: '#A3E635', no: '#F87171', unknown: '#94A3B8' } as const
+
+/** "Large · $4k–15k", "Decision maker" and "Best: Ray" pills, from the tags the intake step writes. */
+export function SizePills({ lead, team, routing, showOwner = true }: { lead: Lead; team: ReturnType<typeof useTeam>; routing: RoutingSettings; showOwner?: boolean }) {
+  const s = sizeOf(lead.tags)
+  if (!s.size && !s.dm) return null
+  const best = s.size ? (routeFor(s.size, routing) || (s.size === 'medium' ? team.settings.closer : null)) : null
+  return (
+    <>
+      {s.size && <Pill color={SIZE_COLOR[s.size]} title="Estimated job size from what they asked for, company size and any budget given">
+        {SIZE_LABEL[s.size]}{s.low != null && s.high ? ` · ${rangeText(s.low, s.high)}` : ''}</Pill>}
+      {s.rush && <Pill color="#EF4444" title="They mentioned a tight deadline">Rush</Pill>}
+      {s.dm && s.dm !== 'unknown' && <Pill color={DM_COLOR[s.dm]}>{DM_LABEL[s.dm]}</Pill>}
+      {showOwner && best && best !== lead.assigned_to && <Pill color="#A78BFA" title="Suggested owner for a job this size (Settings → Lead routing)">Best: {team.name(best)}</Pill>}
+    </>
   )
 }

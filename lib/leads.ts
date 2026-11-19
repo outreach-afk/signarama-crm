@@ -30,7 +30,7 @@ export const TAG_APOLLO = 'apollo_outreach'          // matched an Apollo contac
 export const TAG_APOLLO_POSSIBLE = 'apollo_possible' // matched an Apollo contact by full name only
 export const TAG_IN_SEQUENCE = 'apollo_sequence'     // Apollo contact enrolled in a sequence
 const MACHINE_PREFIXES = ['rs:', 'sentiment:']
-const HIDDEN_PREFIXES = ['rsid:', 'also:', 'inquiry_at:', 'enriched', 'handoff_new']
+const HIDDEN_PREFIXES = ['rsid:', 'also:', 'inquiry_at:', 'enriched', 'handoff_new', 'size:', 'est:', 'dm:', 'rush', 'route:', 'welcome_']
 const MACHINE_TAGS = [TAG_APOLLO, TAG_APOLLO_POSSIBLE, TAG_IN_SEQUENCE]
 
 export function isMachineTag(t: string) {

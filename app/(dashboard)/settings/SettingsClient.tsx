@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react'
 import { runApolloSync } from '@/lib/leads'
 import { useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
-import { useTeam } from '@/components/LeadBits'
+import { useRouting, useTeam } from '@/components/LeadBits'
 import { TEAM_KEY, type TeamSettings } from '@/lib/team'
+import { DEFAULT_WELCOME, ROUTING_KEY, type RoutingSettings } from '@/lib/opportunity'
 import { CADENCES } from '@/lib/cadence'
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
@@ -95,6 +96,10 @@ export default function SettingsClient() {
 
       <Section title="Follow-up team">
         <TeamSettingsForm />
+      </Section>
+
+      <Section title="Lead routing and welcome text">
+        <RoutingForm />
       </Section>
 
       <Section title="Follow-ups in your own calendar">
@@ -233,6 +238,69 @@ function TeamSettingsForm() {
         {msg && <span style={{ fontSize: 12, color: msg.startsWith('✗') ? 'var(--danger)' : 'var(--success)' }}>{msg}</span>}
       </div>
       <p style={{ fontSize: 12, marginTop: 10 }}>Only people who have created an account appear in these lists. A new team member signs up at /register first.</p>
+    </div>
+  )
+}
+
+function RoutingForm() {
+  const team = useTeam()
+  const saved = useRouting()
+  const qc = useQueryClient()
+  const [draft, setDraft] = useState<RoutingSettings | null>(null)
+  const [msg, setMsg] = useState('')
+  const v = draft || saved
+  const set = (k: Partial<RoutingSettings>) => setDraft({ ...v, ...k })
+  async function save() {
+    const { error } = await createClient().from('app_settings').upsert({ key: ROUTING_KEY, value: v, updated_at: new Date().toISOString() } as never)
+    if (error) { setMsg(`✗ ${error.message}`); return }
+    setDraft(null); setMsg('✓ Saved'); qc.invalidateQueries({ queryKey: ['routing'] })
+  }
+  const sel: React.CSSProperties = { padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 13, outline: 'none', minWidth: 160 }
+  const lab: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 5 }
+  const who = (k: 'large' | 'medium' | 'small', label: string, hint: string) => (
+    <div><div style={lab}>{label}</div>
+      <select value={v[k] || ''} onChange={e => set({ [k]: e.target.value || null } as Partial<RoutingSettings>)} style={sel}>
+        <option value="">{k === 'medium' ? 'Follow-up team (opener → closer)' : 'No one'}</option>
+        {team.profiles.map(p => <option key={p.id} value={p.id}>{team.name(p.id)}</option>)}
+      </select>
+      <div style={{ fontSize: 11.5, marginTop: 4, maxWidth: 220 }}>{hint}</div></div>
+  )
+  const preview = (v.welcomeText || DEFAULT_WELCOME).replace(/\{first\}/g, 'Valeri').replace(/\{about\}/g, ' about stickers / decals').replace(/\{company\}/g, 'AlorAir')
+  return (
+    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+      <p style={{ marginBottom: 14 }}>
+        Every new Inquiry and Web Pixel lead is researched in Apollo, sized from what they asked for (plus company size and any budget they gave),
+        and checked for whether the contact is the decision maker. New inquiries then go to the person below for their size.
+        Medium jobs keep the normal opener → closer handoff. Existing leads are never moved automatically: their page shows a &ldquo;Give to…&rdquo; button instead.
+      </p>
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: 14 }}>
+        {who('large', 'Large jobs', `Estimated at ${'$'}${v.largeMin.toLocaleString()} or more: monument, pylon, illuminated and building signs, fleets, multi-location.`)}
+        {who('medium', 'Medium jobs', 'Wraps, window and wall graphics, interior and ADA signs.')}
+        {who('small', 'Small jobs', `${'$'}${v.smallMax.toLocaleString()} or less: banners, stickers, yard signs, A-frames. Also handles “not a fit” requests.`)}
+      </div>
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: 18 }}>
+        <div><div style={lab}>Large from ($)</div><input type="number" value={v.largeMin} onChange={e => set({ largeMin: Number(e.target.value) || 0 })} style={{ ...sel, minWidth: 120, width: 120 }} /></div>
+        <div><div style={lab}>Small up to ($)</div><input type="number" value={v.smallMax} onChange={e => set({ smallMax: Number(e.target.value) || 0 })} style={{ ...sel, minWidth: 120, width: 120 }} /></div>
+      </div>
+      <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer', marginBottom: 10, color: 'var(--text)' }}>
+        <input type="checkbox" checked={v.autoWelcome} onChange={e => set({ autoWelcome: e.target.checked })} style={{ marginTop: 3 }} />
+        <span>Text new inquiries a welcome message automatically
+          <span style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)' }}>
+            Sent once from (951) 444-7269 to inquiries with a valid mobile, 8am–7pm Pacific, Monday–Saturday (later ones wait for the morning).
+            It is a text, not an email, because Revscale&apos;s Inquiry Qualifier already emails every inquiry within a minute. It does not count as a follow-up step.
+          </span></span>
+      </label>
+      <div style={lab}>Welcome text</div>
+      <textarea value={v.welcomeText} onChange={e => set({ welcomeText: e.target.value })} rows={3}
+        style={{ width: '100%', maxWidth: 640, padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 13, outline: 'none', resize: 'vertical' }} />
+      <div style={{ fontSize: 12, margin: '4px 0 14px', maxWidth: 640 }}>
+        {'{first}'} = first name, {'{about}'} = &ldquo; about&nbsp;&lt;what they asked for&gt;&rdquo;, {'{company}'} = their company. Keep &ldquo;Reply STOP to opt out&rdquo;.
+        <br /><b style={{ color: 'var(--text)' }}>Preview ({preview.length} characters):</b> {preview}
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <button onClick={save} disabled={!draft} style={{ padding: '7px 14px', background: 'var(--primary)', border: 'none', borderRadius: 7, color: '#fff', fontWeight: 600, fontSize: 12, cursor: 'pointer', opacity: draft ? 1 : 0.5 }}>Save</button>
+        {msg && <span style={{ fontSize: 12, color: msg.startsWith('✗') ? 'var(--danger)' : 'var(--success)' }}>{msg}</span>}
+      </div>
     </div>
   )
 }

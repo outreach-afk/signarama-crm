@@ -6,7 +6,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import type { Lead, Activity, Stage } from '@/types/database'
 import { apolloMatch, isMachineTag, revscaleSignals, sentiment } from '@/lib/leads'
-import { ChannelPill, DUE_COLOR, LogTouch, OwnerChip, Pill, STAGES, STAGE_COLOR, dueText, maybeHandoff, requestClose, requestHandoff, useTeam } from '@/components/LeadBits'
+import { ChannelPill, DUE_COLOR, LogTouch, OwnerChip, Pill, STAGES, STAGE_COLOR, SizePills, dueText, maybeHandoff, requestClose, requestHandoff, useRouting, useTeam } from '@/components/LeadBits'
+import { parseBrief, routeFor, sizeOf } from '@/lib/opportunity'
 import { isClosed } from '@/lib/leads'
 import { followUp, type TouchType } from '@/lib/cadence'
 import { Sparkles, Search, ArrowRightLeft } from 'lucide-react'
@@ -152,6 +153,9 @@ export default function LeadDetailClient() {
     } catch { setEnrichMsg('✗ Enrichment failed') } finally { setEnriching(false) }
   }
   const enrichment = activities.find(a => a.outcome === 'enrichment')
+  const intakeNote = activities.find(a => a.outcome === 'intake')
+  const welcomeNote = activities.find(a => a.outcome === 'welcome')
+  const routing = useRouting()
 
   async function draftModal() {
     if (!modal || modal === 'note' || !lead) return
@@ -305,6 +309,51 @@ export default function LeadDetailClient() {
           </button>
         ))}
       </div>
+
+      {/* Before you call: what they asked for, how big it is, who decides, what to ask */}
+      {intakeNote && (() => {
+        const b = parseBrief(intakeNote.body || '')
+        const answered = (b.qa || []).filter(x => x.a)
+        const missing = (b.qa || []).filter(x => !x.a)
+        const sz = sizeOf(lead.tags)
+        const best = sz.size ? (routeFor(sz.size, routing) || (sz.size === 'medium' ? team.settings.closer : null)) : null
+        return (
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderLeft: '3px solid #A78BFA', borderRadius: 12, padding: '18px 22px', marginBottom: 24 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+              <h3 style={{ fontFamily: 'Bricolage Grotesque, sans-serif', fontSize: 15, fontWeight: 700 }}>Before you call</h3>
+              <SizePills lead={lead} team={team} routing={routing} showOwner={false} />
+              {best && best !== lead.assigned_to && (
+                <button onClick={async () => { await supabase.from('leads').update({ assigned_to: best } as never).eq('id', id); qc.invalidateQueries({ queryKey: ['lead', id] }); qc.invalidateQueries({ queryKey: ['leads'] }) }}
+                  title="Suggested owner for a job this size (Settings → Lead routing)"
+                  style={{ marginLeft: 'auto', padding: '6px 12px', background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.4)', borderRadius: 8, color: '#C4B5FD', cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }}>
+                  Give to {team.name(best)}
+                </button>
+              )}
+            </div>
+            {(b.product || b.inquiry) && <p style={{ fontSize: 14, lineHeight: 1.6 }}><b style={{ fontWeight: 600 }}>{b.product ? `${b.product}: ` : ''}</b>{b.inquiry}</p>}
+            {b.why && <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 4 }}>{b.sizeLine} — {b.why}</p>}
+            {b.summary && <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 8 }}><b style={{ color: 'var(--text)', fontWeight: 600 }}>What the qualifier learned: </b>{b.summary}</p>}
+            {b.address && <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 6 }}>Job address: {b.address}</p>}
+            {(answered.length > 0 || missing.length > 0) && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginTop: 12 }}>
+                {answered.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>They told us</div>
+                    {answered.map((x, i) => <div key={i} style={{ fontSize: 12.5, lineHeight: 1.5, marginBottom: 6 }}><span style={{ color: 'var(--text-muted)' }}>{x.q}</span><br />{x.a}</div>)}
+                  </div>
+                )}
+                {missing.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Ask on the call</div>
+                    {missing.map((x, i) => <div key={i} style={{ fontSize: 12.5, lineHeight: 1.5, marginBottom: 4 }}>• {x.q}</div>)}
+                  </div>
+                )}
+              </div>
+            )}
+            {welcomeNote && <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10 }}>{welcomeNote.body?.startsWith('Automatic welcome text sent') ? '✓ Welcome text sent ' : '⚠ '}{welcomeNote.body?.startsWith('Automatic welcome text sent') ? new Date(welcomeNote.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : welcomeNote.body}</p>}
+          </div>
+        )
+      })()}
 
       {/* Follow-up */}
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '18px 22px', marginBottom: 24 }}>

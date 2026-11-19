@@ -1,6 +1,7 @@
 // Server-side sync helpers shared by /api/leads/ingest, /api/leads/sync and the cron.
 import { createHash } from 'crypto'
 import { ownerForNewLead } from '@/lib/team'
+import type { IntakePayload } from '@/lib/intake'
 import { createClient as createSupabase } from '@supabase/supabase-js'
 import {
   TAG_APOLLO, TAG_APOLLO_POSSIBLE, TAG_IN_SEQUENCE, channelFor, fetchAllLeads,
@@ -64,7 +65,7 @@ function mergedChannel(a: string | null, b: string | null, tags: string[], inqui
 }
 
 export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[], defaultChannel?: string | null) {
-  const result = { total: leads.length, inserted: 0, updated: 0, skipped: 0, errors: 0, firstError: null as string | null, merged: 0, newWarm: [] as Row[], needDetails: [] as string[] }
+  const result = { total: leads.length, inserted: 0, updated: 0, skipped: 0, errors: 0, firstError: null as string | null, merged: 0, newWarm: [] as Row[], needDetails: [] as string[], fresh: [] as string[], intakes: new Map<string, IntakePayload>() }
   const fail = (msg: string) => { result.errors++; result.firstError ??= msg }
 
   const incoming = leads.filter(l => clean(l.id))
@@ -128,6 +129,7 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
     const tags = revscaleTags(lead)
     const inquiry = clean(lead.inquiry)
     const prior = existing.get(id)
+    const intake: IntakePayload | null = lead.intake && typeof lead.intake === 'object' ? lead.intake : null
 
     // Inquiries arrive from the activity feed as id + email only; ask the caller for the rest.
     if (channel === 'inquiry' && !fields.first_name && !clean(prior?.first_name)) result.needDetails.push(id)
@@ -148,6 +150,7 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
       if (error) { fail(error.message); continue }
       result.merged++
       Object.assign(twin, patch); existing.set(id, twin)
+      if (intake) result.intakes.set(twin.id, intake)
       // A known visitor who now sends an inquiry is news worth an alert.
       if (channel === 'inquiry' && (fields.first_name || twin.first_name)) {
         result.newWarm.push({
@@ -172,6 +175,7 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
         notes: noteParts.length ? noteParts.join('\n\n') : null,
         intent_score: lead.intent_score ?? lead.leadScore ?? null,
         created_at: clean(lead.createdAt) || objectIdDate(id) || new Date().toISOString(),
+        _intake: intake,
       })
       continue
     }
@@ -189,6 +193,9 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
     const detailsArrived = channel === 'inquiry' && fields.first_name && !clean(prior.first_name)
     const { error } = await db.from('leads').update(patch).eq('id', prior.id)
     if (error) fail(error.message); else result.updated++
+    if (!error && intake) result.intakes.set(prior.id, intake)
+    // An inquiry whose name arrives now is effectively new: research, route and welcome it.
+    if (!error && detailsArrived) result.fresh.push(prior.id)
     if (!error && detailsArrived) {
       result.newWarm.push({
         name: [fields.first_name, fields.last_name].filter(Boolean).join(' '), channel, company: fields.company,
@@ -198,14 +205,18 @@ export async function ingestRevscale(db: ReturnType<typeof adminDb>, leads: Row[
     }
   }
 
+  const intakeByRs = new Map<string, IntakePayload>()
+  for (const r of inserts) { if (r._intake) intakeByRs.set(r.revscale_id, r._intake); delete r._intake }
   for (const batch of chunk(inserts, 200)) {
     const { data, error } = await db.from('leads').insert(batch)
-      .select('id, first_name, last_name, email, phone, company, source_subtype, notes')
+      .select('id, revscale_id, first_name, last_name, email, phone, company, source_subtype, notes')
     if (error) { result.errors += batch.length; result.firstError ??= error.message; continue }
     result.inserted += batch.length
     for (const r of data || []) {
+      const ik = intakeByRs.get(r.revscale_id); if (ik) result.intakes.set(r.id, ik)
       if (r.source_subtype !== 'web_pixel' && r.source_subtype !== 'inquiry') continue
       if (r.source_subtype === 'inquiry' && !r.first_name) continue // alerted once its details arrive
+      result.fresh.push(r.id)
       result.newWarm.push({
         name: [r.first_name, r.last_name].filter(Boolean).join(' ') || r.email || 'Unknown',
         channel: r.source_subtype, company: r.company, email: r.email, phone: r.phone,

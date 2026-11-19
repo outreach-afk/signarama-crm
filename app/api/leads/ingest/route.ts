@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { processArrivals, refreshIntake, loadSettings, sendPendingWelcomes } from '@/lib/intake'
 import { adminDb, dedupeWarm, ingestRevscale, normalizeRevscale, reconcileApollo, revscaleStatus, syncApollo } from '@/lib/sync'
 
 export const maxDuration = 60
@@ -42,13 +43,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(await revscaleStatus(db))
     }
 
+    if (body.action === 'welcomes') {
+      return NextResponse.json(await sendPendingWelcomes(db))
+    }
+    // Re-score open warm leads (size, decision maker, brief). No Apollo calls, no texts, no owner changes.
+    if (body.action === 'rescore') {
+      const settings = await loadSettings(db)
+      const { data } = await db.from('leads').select('*').eq('source', 'revscale').in('source_subtype', ['inquiry', 'web_pixel'])
+        .not('stage', 'in', '(won,completed,lost,unqualified)').order('created_at', { ascending: false }).range(Number(body.from) || 0, (Number(body.from) || 0) + 39)
+      for (const l of data || []) await refreshIntake(db, l, { settings })
+      return NextResponse.json({ rescored: data?.length || 0, next: (data?.length || 0) === 40 ? (Number(body.from) || 0) + 40 : null })
+    }
+
     const leads = body.leads
     if (!Array.isArray(leads) || leads.length === 0) {
       return NextResponse.json({ error: 'leads must be a non-empty array' }, { status: 400 })
     }
     const result = await ingestRevscale(db, leads, body.channel ?? body.source_subtype ?? null)
     const apollo = body.reconcile === false ? null : await reconcileApollo(db)
-    return NextResponse.json({ imported: result.inserted + result.updated, ...result, apollo })
+    const intake = await processArrivals(db, result.fresh, result.intakes)
+    const { intakes, ...rest } = result
+    return NextResponse.json({ imported: result.inserted + result.updated, ...rest, intakesReceived: intakes.size, intake, apollo })
   } catch (e) {
     return NextResponse.json({ error: 'Ingest failed', detail: e instanceof Error ? e.message : String(e) }, { status: 500 })
   }

@@ -9,10 +9,15 @@ import type { Lead } from '@/types/database'
 import { fullName, sentiment, timeAgo } from '@/lib/leads'
 import { urgency, type FollowUp } from '@/lib/cadence'
 import {
-  ChannelPill, DUE_COLOR, LogTouch, OwnerChip, Pill, card, dueText, h1, hasTag, requestClose, requestHandoff, sub, useFollowUps, useLeads, useTeam,
+  CALL_OUTCOMES, ChannelPill, DUE_COLOR, LogTouch, OwnerChip, Pill, SizePills, card, dueText, h1, hasTag, requestClose, requestHandoff, sub, useFollowUps, useLeads, useRouting, useTeam,
 } from '@/components/LeadBits'
+import { sizeOf } from '@/lib/opportunity'
 
 const DAY = 86_400_000
+const isToday = (iso: string | null) => !!iso && new Date(iso).toDateString() === new Date().toDateString()
+/** Touched today = done for today. The next step shows up again on its own day. */
+const doneToday = (f: FollowUp) => isToday(f.lastTouchAt)
+const boost = (l: Lead) => { const s = sizeOf(l.tags); return (s.size === 'large' ? 10 : 0) + (s.rush ? 8 : 0) }
 const inquiryText = (l: Lead) => (l.notes || '').startsWith('Inquiry: ') ? l.notes!.slice(9).split('\n\n')[0] : null
 const ICON: Record<string, string> = { call: 'Call', email: 'Email', sms: 'Text' }
 
@@ -27,7 +32,10 @@ export default function TodayClient() {
   const [openScript, setOpenScript] = useState<string | null>(null)
   const [showSoon, setShowSoon] = useState(false)
   const [limit, setLimit] = useState(30)
+  const [showDone, setShowDone] = useState(false)
+  const [calling, setCalling] = useState<string | null>(null)
   const team = useTeam()
+  const routing = useRouting()
   const supabase = useMemo(() => createClient(), [])
 
   // Whose list: default to mine when I own open leads, otherwise everyone's.
@@ -54,7 +62,7 @@ export default function TodayClient() {
     const c = { mine: 0, unassigned: 0, everyone: 0 }
     for (const l of leads) {
       const f = followUps.get(l.id)
-      if (!f || !(f.state === 'overdue' || f.state === 'due')) continue
+      if (!f || !(f.state === 'overdue' || f.state === 'due') || doneToday(f)) continue
       c.everyone++
       if (team.me && l.assigned_to === team.me) c.mine++
       if (!l.assigned_to) c.unassigned++
@@ -62,22 +70,24 @@ export default function TodayClient() {
     return c
   }, [leads, followUps, team.me])
 
-  const { now, soon, backlog, replies } = useMemo(() => {
-    const now: { l: Lead; f: FollowUp }[] = [], soon: { l: Lead; f: FollowUp }[] = [], backlog: Lead[] = []
+  const { now, soon, backlog, replies, done } = useMemo(() => {
+    const now: { l: Lead; f: FollowUp }[] = [], soon: { l: Lead; f: FollowUp }[] = [], backlog: Lead[] = [], done: { l: Lead; f: FollowUp }[] = []
     const t = Date.now()
     for (const l of leads) {
       if (!inScope(l)) continue
       const f = followUps.get(l.id)
       if (!f) continue
-      if (f.state === 'overdue' || f.state === 'due') now.push({ l, f })
+      if (doneToday(f)) done.push({ l, f })
+      else if (f.state === 'overdue' || f.state === 'due') now.push({ l, f })
       else if (f.state === 'backlog') backlog.push(l)
       else if (f.dueAt && f.dueAt - t < 7 * DAY) soon.push({ l, f })
     }
-    now.sort((a, b) => urgency(b.l, b.f) - urgency(a.l, a.f) || (a.f.dueAt || 0) - (b.f.dueAt || 0))
+    now.sort((a, b) => urgency(b.l, b.f) + boost(b.l) - urgency(a.l, a.f) - boost(a.l) || (a.f.dueAt || 0) - (b.f.dueAt || 0))
+    done.sort((a, b) => (b.f.lastTouchAt || '').localeCompare(a.f.lastTouchAt || ''))
     soon.sort((a, b) => (a.f.dueAt || 0) - (b.f.dueAt || 0))
     const inNow = new Set(now.map(x => x.l.id))
     const replies = leads.filter(l => inScope(l) && l.source === 'revscale' && hasTag(l, 'rs:replied') && l.stage === 'new' && sentiment(l)?.tone !== 'negative' && !inNow.has(l.id))
-    return { now, soon, backlog, replies }
+    return { now, soon, backlog, replies, done }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads, followUps, owner, team.me])
 
@@ -99,6 +109,7 @@ export default function TodayClient() {
               <Link href={`/leads/${l.id}`} style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)', textDecoration: 'none' }}>{fullName(l)}</Link>
               {l.company && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{l.company}</span>}
               <ChannelPill lead={l} />
+              <SizePills lead={l} team={team} routing={routing} />
               {hasTag(l, 'rs:qualified') && <Pill color="#34D399">Qualified</Pill>}
               <Pill color={DUE_COLOR[f.state]}>{dueText(f)}</Pill>
             </div>
@@ -118,7 +129,7 @@ export default function TodayClient() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
-            {l.phone && <a href={`tel:${l.phone}`} style={btn('#10B981')}><Phone size={12} /> Call</a>}
+            {l.phone && <a href={`tel:${l.phone}`} onClick={() => setCalling(l.id)} style={btn('#10B981')}><Phone size={12} /> Call</a>}
             <LogTouch compact onLog={(type, outcome) => logTouch(l, type, outcome)} />
             {canHandOff(l) && (
               <button onClick={() => requestHandoff(l, 'Handed off early', false)} style={{ ...btn('#F59E0B'), cursor: 'pointer' }} title={`Pass this lead to ${team.name(team.settings.closer)} now`}>
@@ -137,6 +148,15 @@ export default function TodayClient() {
             <Link href={`/leads/${l.id}`} style={btn('#3B82F6')}><ExternalLink size={12} /> Open</Link>
           </div>
         </div>
+        {calling === l.id && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 10, padding: '8px 10px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 8 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: '#34D399', marginRight: 4 }}>How did the call go?</span>
+            {CALL_OUTCOMES.map(o => (
+              <button key={o} onClick={() => { setCalling(null); logTouch(l, 'call', o) }} style={{ ...btn('#10B981'), cursor: 'pointer' }}>{o}</button>
+            ))}
+            <button onClick={() => setCalling(null)} style={{ ...btn('#64748B'), cursor: 'pointer' }}>Didn&apos;t call</button>
+          </div>
+        )}
       </div>
     )
   }
@@ -205,7 +225,7 @@ export default function TodayClient() {
         <div style={{ ...card, marginBottom: 20, overflow: 'visible' }}>
           <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', borderLeft: '3px solid #F59E0B', borderRadius: '12px 12px 0 0' }}>
             <div style={{ fontWeight: 700, fontSize: 15 }}>Do now <span style={{ color: '#F59E0B', marginLeft: 6 }}>{now.length}</span></div>
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>Log each call, email or text when you make it. That moves the lead to its next step and off this list.</div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>Log each call, email or text (emails and texts sent from the CRM log themselves). A lead you touched today moves to Done today. Bigger jobs and rush deadlines sort to the top.</div>
           </div>
           {now.slice(0, limit).map(row)}
           {now.length > limit && (
@@ -213,6 +233,30 @@ export default function TodayClient() {
               Show 30 more · {now.length - limit} remaining
             </button>
           )}
+        </div>
+      )}
+
+      {done.length > 0 && (
+        <div style={{ ...card, marginBottom: 20 }}>
+          <button onClick={() => setShowDone(s => !s)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '14px 20px', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', textAlign: 'left' }}>
+            {showDone ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            <Check size={15} color="#34D399" />
+            <span style={{ fontWeight: 700, fontSize: 15 }}>Done today</span>
+            <span style={{ color: '#34D399' }}>{done.length}</span>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 8 }}>Touched today, so off the list. Each comes back on the day of its next step.</span>
+          </button>
+          {showDone && done.map(({ l, f }) => {
+            const last = (['call', 'email', 'sms'] as const).filter(t => isToday(f.last[t] || null)).map(t => ICON[t].toLowerCase())
+            return (
+              <Link key={l.id} href={`/leads/${l.id}`} style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '10px 20px', borderTop: '1px solid var(--border)', textDecoration: 'none', color: 'inherit', flexWrap: 'wrap' }}>
+                <OwnerChip id={l.assigned_to} team={team} />
+                <span style={{ fontWeight: 600, fontSize: 13.5, minWidth: 180 }}>{fullName(l)}</span>
+                <span style={{ fontSize: 12, color: '#34D399' }}>✓ {last.join(' + ')} {timeAgo(f.lastTouchAt)}</span>
+                <span style={{ fontSize: 12.5, color: 'var(--text-secondary)', flex: 1 }}>Next: {f.label}{f.dueAt && f.state !== 'due' && f.state !== 'overdue' ? ` · ${new Date(f.dueAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : ' · today if needed'}</span>
+                <ChannelPill lead={l} />
+              </Link>
+            )
+          })}
         </div>
       )}
 
