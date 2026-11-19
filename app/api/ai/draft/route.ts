@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { adminDb } from '@/lib/sync'
-import { followUp } from '@/lib/cadence'
+import { cadenceFor, cadenceTouches, followUp, stepsDone } from '@/lib/cadence'
+import { stepTemplate } from '@/lib/templates'
 import { parseBrief } from '@/lib/opportunity'
 
 export const maxDuration = 30
@@ -42,22 +43,18 @@ function nextAsk(b: ReturnType<typeof parseBrief>) {
   return asks.length ? asks.slice(0, 2).join(' and ') : null
 }
 
-function template(type: string, lead: Any, c: ReturnType<typeof context>) {
+/** The step this message is for, and the matching free template. */
+function template(type: string, lead: Any, c: ReturnType<typeof context>, acts: Any[]) {
   const first = lead.first_name ? lead.first_name.charAt(0).toUpperCase() + lead.first_name.slice(1).toLowerCase() : 'there'
   const product = c.brief.product || c.inquiry?.match(/^\[([^\]]{3,60})\]/)?.[1] || null
-  const need = c.inquiry || product ? (product || 'your sign project').toLowerCase() : null
-  const n = c.touches.length
-  const ask = nextAsk(c.brief)
-  if (type === 'sms') {
-    if (need) return n === 0
-      ? `Hi ${first}, this is Signarama Corona about your ${need} request. ${ask ? `To price it, could you tell me ${ask}?` : 'When is a good time for a quick call so I can get you an accurate price?'}`
-      : `Hi ${first}, Signarama Corona here following up on ${need}. Want me to send a ballpark price so you have it?`
-    return `Hi ${first}, this is Signarama Corona here in Corona. If you have a sign, banner or vehicle graphics project coming up, I am happy to price it. Reply STOP to opt out.`
-  }
-  if (need) return n === 0
-    ? `Hi ${first},\n\nThanks for reaching out to Signarama Corona about ${need}. I would like to get you an accurate price quickly. Could you tell me ${ask || 'the approximate size, whether you need installation, and when you need it by'}?\n\nIf it is easier, call me on (951) 444-7269 and we can sort it out in a couple of minutes.`
-    : `Hi ${first},\n\nFollowing up on ${need}. I have not been able to reach you by phone, so I wanted to make it easy: reply with ${ask || 'the size and your deadline'} and I will send a price the same day.\n\nIf the project is on hold, just let me know and I will check back later.`
-  return `Hi ${first},\n\nI am with Signarama Corona, the sign shop here in Corona. We help local businesses${lead.company ? ` like ${lead.company}` : ''} with building signs, window and vehicle graphics, and banners.\n\nIs there a project coming up that I could price for you?`
+  const need = product && !/^inquiry$/i.test(product) ? `your ${product.toLowerCase()} request` : c.inquiry ? 'your sign project' : null
+  const cadence = cadenceFor(lead)
+  let key = cadence?.key || (lead.source === 'apollo' ? 'web_pixel' : 'default')
+  let idx = c.f && c.f.stepIndex >= 0 ? c.f.stepIndex : cadence ? stepsDone(cadence, cadenceTouches(lead, acts).counted) : c.touches.length
+  if (key === 'default' && !need && c.touches.length === 0) { key = 'web_pixel'; idx = 0 }
+  const industry = (c.enrichment?.match(/Industry: (.+)/) || [])[1] || null
+  const t = stepTemplate(key, idx, { first, need, ask: nextAsk(c.brief), company: lead.company || null, industry })
+  return { draft: type === 'sms' ? t.sms : t.email, subject: t.subject, step: t.step, of: t.of }
 }
 
 export async function POST(req: NextRequest) {
@@ -78,7 +75,9 @@ export async function POST(req: NextRequest) {
       acts = a.data || []
     }
     const c = context(lead, acts)
-    const fallback = (reason: string) => NextResponse.json({ draft: template(type, lead, c), fallback: true, reason })
+    const tpl = template(type, lead, c, acts)
+    const stepNote = tpl.step <= tpl.of ? `Step ${tpl.step} of ${tpl.of} template` : 'Monthly check-in template'
+    const fallback = (reason: string) => NextResponse.json({ draft: tpl.draft, subject: tpl.subject, fallback: true, reason: `${stepNote}. ${reason}` })
 
     const apiKey = process.env.ANTHROPIC_API_KEY
     if (!apiKey) return fallback('The AI key is not configured, so this is the standard template.')
@@ -124,13 +123,13 @@ export async function POST(req: NextRequest) {
       console.error('Anthropic API error:', response.status, err)
       const billing = /credit balance|billing/i.test(err)
       return fallback(billing
-        ? 'Template draft (AI drafting is paused until credit is added to the Anthropic API account). It uses what the lead asked for and what we still need to know. Edit before sending.'
+        ? 'Written for this follow-up step; check it before sending. (AI drafting is off until the Anthropic API account has credit.)'
         : `The AI service returned an error (${response.status}), so this is the standard template.`)
     }
 
     const data = await response.json()
     const draft = data.content?.[0]?.text?.trim() || ''
-    return draft ? NextResponse.json({ draft, usedEnrichment: !!c.enrichment }) : fallback('The AI returned nothing, so this is the standard template.')
+    return draft ? NextResponse.json({ draft, subject: tpl.subject, usedEnrichment: !!c.enrichment }) : fallback('The AI returned nothing, so this is the standard template.')
   } catch (err) {
     console.error('AI draft error:', err)
     return NextResponse.json({ error: 'Internal error' }, { status: 500 })

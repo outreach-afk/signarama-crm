@@ -167,7 +167,7 @@ export default function LeadDetailClient() {
         body: JSON.stringify({ type: modal, leadId: id, lead }),
       })
       const data = await res.json()
-      if (data.draft) { setModalBody(data.draft); setModalMsg(data.fallback ? `ⓘ ${data.reason}` : data.usedEnrichment ? '✓ Drafted using the company research' : '') }
+      if (data.draft) { setModalBody(data.draft); if (modal === 'email' && data.subject) setModalSubject(data.subject); setModalMsg(data.fallback ? `ⓘ ${data.reason}` : data.usedEnrichment ? '✓ Drafted using the company research' : '') }
       else setModalMsg('✗ Could not generate draft')
     } catch {
       setModalMsg('✗ AI draft failed')
