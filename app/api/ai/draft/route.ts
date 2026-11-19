@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { adminDb } from '@/lib/sync'
 import { followUp } from '@/lib/cadence'
+import { parseBrief } from '@/lib/opportunity'
 
 export const maxDuration = 30
 
@@ -25,22 +26,37 @@ function context(lead: Any, acts: Any[]) {
     : lead.source_subtype === 'web_pixel'
       ? 'They visited our website but did not ask for anything. NEVER mention that we saw them on the site or tracked their visit.'
       : lead.source === 'apollo' ? 'Cold contact from our outbound list. They have not asked for anything.' : 'Existing contact.'
-  return { inquiry, enrichment, touches, f, history, how }
+  const brief = parseBrief(acts.find(a => a.outcome === 'intake')?.body || '')
+  return { inquiry, enrichment, touches, f, history, how, brief }
+}
+
+/** The one or two things we still need to quote, phrased as a question (from the qualifier's unanswered questions). */
+function nextAsk(b: ReturnType<typeof parseBrief>) {
+  const missing = (b.qa || []).filter(x => !x.a).map(x => x.q)
+  const has = (re: RegExp) => missing.some(q => re.test(q))
+  const asks: string[] = []
+  if (has(/type of signage/i)) asks.push('what size you have in mind')
+  if (has(/installed|deadline/i)) asks.push('when you need it by')
+  if (has(/budget/i) && asks.length < 2) asks.push('whether you have a budget range or would like a couple of options')
+  if (has(/logo|brand/i) && asks.length < 2) asks.push('whether your logo file is ready or you need design help')
+  return asks.length ? asks.slice(0, 2).join(' and ') : null
 }
 
 function template(type: string, lead: Any, c: ReturnType<typeof context>) {
   const first = lead.first_name ? lead.first_name.charAt(0).toUpperCase() + lead.first_name.slice(1).toLowerCase() : 'there'
-  const need = c.inquiry ? (c.inquiry.match(/^\[([^\]]{3,60})\]/)?.[1] || 'your sign project').toLowerCase() : null
+  const product = c.brief.product || c.inquiry?.match(/^\[([^\]]{3,60})\]/)?.[1] || null
+  const need = c.inquiry || product ? (product || 'your sign project').toLowerCase() : null
   const n = c.touches.length
+  const ask = nextAsk(c.brief)
   if (type === 'sms') {
     if (need) return n === 0
-      ? `Hi ${first}, this is Signarama Corona. We got your request about ${need}. When is a good time for a quick call so I can get you an accurate price?`
+      ? `Hi ${first}, this is Signarama Corona about your ${need} request. ${ask ? `To price it, could you tell me ${ask}?` : 'When is a good time for a quick call so I can get you an accurate price?'}`
       : `Hi ${first}, Signarama Corona here following up on ${need}. Want me to send a ballpark price so you have it?`
     return `Hi ${first}, this is Signarama Corona here in Corona. If you have a sign, banner or vehicle graphics project coming up, I am happy to price it. Reply STOP to opt out.`
   }
   if (need) return n === 0
-    ? `Hi ${first},\n\nThanks for reaching out to Signarama Corona about ${need}. I would like to get you an accurate price quickly. Could you tell me the approximate size, whether you need installation, and when you need it by?\n\nIf it is easier, call me on (951) 444-7269 and we can sort it out in a couple of minutes.`
-    : `Hi ${first},\n\nFollowing up on ${need}. I have not been able to reach you by phone, so I wanted to make it easy: reply with the size and your deadline and I will send a price the same day.\n\nIf the project is on hold, just let me know and I will check back later.`
+    ? `Hi ${first},\n\nThanks for reaching out to Signarama Corona about ${need}. I would like to get you an accurate price quickly. Could you tell me ${ask || 'the approximate size, whether you need installation, and when you need it by'}?\n\nIf it is easier, call me on (951) 444-7269 and we can sort it out in a couple of minutes.`
+    : `Hi ${first},\n\nFollowing up on ${need}. I have not been able to reach you by phone, so I wanted to make it easy: reply with ${ask || 'the size and your deadline'} and I will send a price the same day.\n\nIf the project is on hold, just let me know and I will check back later.`
   return `Hi ${first},\n\nI am with Signarama Corona, the sign shop here in Corona. We help local businesses${lead.company ? ` like ${lead.company}` : ''} with building signs, window and vehicle graphics, and banners.\n\nIs there a project coming up that I could price for you?`
 }
 
@@ -75,6 +91,8 @@ export async function POST(req: NextRequest) {
       `How they came to us: ${c.how}`,
       c.inquiry && `What they asked for, in their words: "${c.inquiry}"`,
       c.enrichment && `Company research:\n${c.enrichment}`,
+      c.brief.summary && `What our website assistant already learned from them: ${c.brief.summary}`,
+      (c.brief.qa || []).some(x => !x.a) && `Still unknown (ask at most one of these): ${(c.brief.qa || []).filter(x => !x.a).map(x => x.q).join(' | ')}`,
       `Pipeline stage: ${lead.stage}`,
       lead.deal_value && `Quote value: $${lead.deal_value}`,
       c.history ? `Contact so far (newest first):\n${c.history}` : 'Contact so far: none. This is the first message.',
@@ -106,7 +124,7 @@ export async function POST(req: NextRequest) {
       console.error('Anthropic API error:', response.status, err)
       const billing = /credit balance|billing/i.test(err)
       return fallback(billing
-        ? 'The Anthropic API account is out of credit, so this is the standard template, not an AI draft. Add credit at console.anthropic.com → Plans & Billing.'
+        ? 'Template draft (AI drafting is paused until credit is added to the Anthropic API account). It uses what the lead asked for and what we still need to know. Edit before sending.'
         : `The AI service returned an error (${response.status}), so this is the standard template.`)
     }
 
