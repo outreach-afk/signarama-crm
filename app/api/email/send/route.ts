@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { encodeHeader, gmailError } from '@/lib/messaging'
 import { accessToken } from '@/lib/gmail'
+import { DEFAULT_SIGNATURE, SIGNATURE_KEY, bodyHtml, signatureText, type Signature } from '@/lib/signature'
 
 async function getGmailToken() {
   const r = await accessToken()
@@ -9,15 +10,31 @@ async function getGmailToken() {
   return r.token
 }
 
-function makeRaw(to: string, from: string, subject: string, body: string) {
+/** multipart/alternative: plain text + HTML, both ending with the signature. */
+function makeRaw(to: string, from: string, subject: string, body: string, sig: Signature) {
+  const boundary = `sig_${Date.now().toString(36)}`
+  const withSig = sig.enabled && sig.html.trim()
+  const text = withSig ? `${body.trim()}\n\n--\n${signatureText(sig.html)}` : body
+  const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222222">${bodyHtml(body)}${withSig ? `<br>${sig.html}` : ''}</div>`
+  const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64').replace(/.{76}/g, '$&\r\n')
   const msg = [
     `From: ${encodeHeader('Signarama Corona')} <${from}>`,
     `To: ${to}`,
     `Subject: ${encodeHeader(subject)}`,
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset=UTF-8',
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
     '',
-    body,
+    `--${boundary}`,
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    b64(text),
+    `--${boundary}`,
+    'Content-Type: text/html; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    b64(html),
+    `--${boundary}--`,
   ].join('\r\n')
   return Buffer.from(msg).toString('base64url')
 }
@@ -31,13 +48,16 @@ export async function POST(req: NextRequest) {
 
     const token = await getGmailToken()
     const from = process.env.GMAIL_FROM!
+    const supabase = await createClient()
+    const { data: sigRow } = await supabase.from('app_settings').select('value').eq('key', SIGNATURE_KEY).maybeSingle()
+    const sig = { ...DEFAULT_SIGNATURE, ...((sigRow as { value?: Partial<Signature> } | null)?.value || {}) } as Signature
 
     const gmailRes = await fetch(
       'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ raw: makeRaw(to, from, subject || 'Follow up', body) }),
+        body: JSON.stringify({ raw: makeRaw(to, from, subject || 'Follow up', body, sig) }),
       }
     )
 
@@ -46,7 +66,6 @@ export async function POST(req: NextRequest) {
     }
 
     // Log activity
-    const supabase = await createClient()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await supabase.from('activities').insert([{ lead_id: leadId, type: 'email', outcome: 'Sent', body: `Email to ${to} — "${subject}": ${body.slice(0, 200)}` }] as any)
 

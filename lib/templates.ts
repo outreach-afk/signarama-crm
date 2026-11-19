@@ -7,7 +7,7 @@
 
 export type Msg = { subject: string; email: string; sms: string }
 
-const SIGN = '\n\nThanks,\nSignarama Corona\n(951) 444-7269'
+const SIGN = '\n\nThanks,' // the email signature (Settings → Email signature) is added on send
 
 // Inquiry: they asked for a quote. 8 steps (lib/cadence.ts CADENCES.inquiry).
 const INQUIRY: Msg[] = [

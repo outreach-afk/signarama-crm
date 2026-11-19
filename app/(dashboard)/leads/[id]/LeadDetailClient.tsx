@@ -554,6 +554,7 @@ export default function LeadDetailClient() {
                 <textarea value={modalBody} onChange={e => setModalBody(e.target.value)} rows={5}
                   style={{ width: '100%', padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 13, outline: 'none', resize: 'vertical' }} />
               </div>
+              {modal === 'email' && <p style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Your email signature is added automatically when it sends (Settings → Email signature).</p>}
               {modalMsg && <p style={{ fontSize: 13, lineHeight: 1.5, color: modalMsg.startsWith('✓') ? 'var(--success)' : modalMsg.startsWith('ⓘ') ? 'var(--warning)' : 'var(--danger)' }}>{modalMsg}</p>}
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
                 <button onClick={() => setModal(null)} style={{ padding: '8px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 13 }}>Cancel</button>

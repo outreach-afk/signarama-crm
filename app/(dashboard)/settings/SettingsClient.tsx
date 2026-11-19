@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { runApolloSync } from '@/lib/leads'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { useRouting, useTeam } from '@/components/LeadBits'
 import { TEAM_KEY, type TeamSettings } from '@/lib/team'
 import { DEFAULT_WELCOME, ROUTING_KEY, type RoutingSettings } from '@/lib/opportunity'
+import { DEFAULT_SIGNATURE, DEFAULT_SIGNATURE_HTML, SIGNATURE_KEY, type Signature } from '@/lib/signature'
 import { CADENCES } from '@/lib/cadence'
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
@@ -96,6 +97,10 @@ export default function SettingsClient() {
 
       <Section title="Follow-up team">
         <TeamSettingsForm />
+      </Section>
+
+      <Section title="Email signature">
+        <SignatureForm />
       </Section>
 
       <Section title="Lead routing and welcome text">
@@ -238,6 +243,52 @@ function TeamSettingsForm() {
         {msg && <span style={{ fontSize: 12, color: msg.startsWith('✗') ? 'var(--danger)' : 'var(--success)' }}>{msg}</span>}
       </div>
       <p style={{ fontSize: 12, marginTop: 10 }}>Only people who have created an account appear in these lists. A new team member signs up at /register first.</p>
+    </div>
+  )
+}
+
+function SignatureForm() {
+  const qc = useQueryClient()
+  const { data: saved } = useQuery({
+    queryKey: ['signature'],
+    queryFn: async () => {
+      const { data } = await createClient().from('app_settings').select('value').eq('key', SIGNATURE_KEY).maybeSingle()
+      return { ...DEFAULT_SIGNATURE, ...(((data as { value?: Partial<Signature> } | null)?.value) || {}) } as Signature
+    },
+  })
+  const [draft, setDraft] = useState<Signature | null>(null)
+  const [msg, setMsg] = useState('')
+  const v = draft || saved || DEFAULT_SIGNATURE
+  async function save() {
+    const { error } = await createClient().from('app_settings').upsert({ key: SIGNATURE_KEY, value: v, updated_at: new Date().toISOString() } as never)
+    if (error) { setMsg(`✗ ${error.message}`); return }
+    setDraft(null); setMsg('✓ Saved'); qc.invalidateQueries({ queryKey: ['signature'] })
+  }
+  return (
+    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+      <p style={{ marginBottom: 12 }}>
+        Gmail only adds the signature from Gmail settings when you send from Gmail itself, so the CRM adds this one to every email it sends.
+        It is a copy of the outreach@ Gmail signature. If you change the signature in Gmail, paste the new one here too (HTML).
+      </p>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', marginBottom: 10, color: 'var(--text)' }}>
+        <input type="checkbox" checked={v.enabled} onChange={e => setDraft({ ...v, enabled: e.target.checked })} /> Add the signature to emails sent from the CRM
+      </label>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 5 }}>Signature (HTML)</div>
+          <textarea value={v.html} onChange={e => setDraft({ ...v, html: e.target.value })} rows={9} spellCheck={false}
+            style={{ width: '100%', padding: '8px 10px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 11.5, fontFamily: 'ui-monospace, monospace', outline: 'none', resize: 'vertical' }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 5 }}>How it looks</div>
+          <div style={{ background: '#ffffff', borderRadius: 7, padding: 14, border: '1px solid var(--border)' }} dangerouslySetInnerHTML={{ __html: v.html }} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
+        <button onClick={save} disabled={!draft} style={{ padding: '7px 14px', background: 'var(--primary)', border: 'none', borderRadius: 7, color: '#fff', fontWeight: 600, fontSize: 12, cursor: 'pointer', opacity: draft ? 1 : 0.5 }}>Save</button>
+        <button onClick={() => setDraft({ ...v, html: DEFAULT_SIGNATURE_HTML })} style={{ padding: '7px 14px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>Reset to Gmail signature</button>
+        {msg && <span style={{ fontSize: 12, color: msg.startsWith('✗') ? 'var(--danger)' : 'var(--success)' }}>{msg}</span>}
+      </div>
     </div>
   )
 }
