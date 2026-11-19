@@ -269,7 +269,8 @@ const DM_COLOR = { yes: '#34D399', likely: '#A3E635', no: '#F87171', unknown: '#
 /** "Large · $4k–15k", "Decision maker" and "Best: Ray" pills, from the tags the intake step writes. */
 export function SizePills({ lead, team, routing, showOwner = true }: { lead: Lead; team: ReturnType<typeof useTeam>; routing: RoutingSettings; showOwner?: boolean }) {
   const s = sizeOf(lead.tags)
-  if (!s.size && !s.dm) return null
+  if (s.size === 'unknown') s.size = null
+  if (!s.size && (!s.dm || s.dm === 'unknown')) return null
   const best = s.size ? (routeFor(s.size, routing) || (s.size === 'medium' ? team.settings.closer : null)) : null
   return (
     <>

@@ -2,7 +2,7 @@
 // Pure rules, no AI calls: cheap, instant and the same answer every time.
 // Price ranges are typical Signarama job sizes; edit them here as you learn real numbers.
 
-export type Size = 'large' | 'medium' | 'small' | 'not_a_fit'
+export type Size = 'large' | 'medium' | 'small' | 'not_a_fit' | 'unknown'
 
 type Rule = { match: RegExp; label: string; low: number; high: number; fit?: false }
 
@@ -12,7 +12,7 @@ export const PRODUCTS: Rule[] = [
   { match: /pylon|pole sign|freeway sign/i, label: 'Pylon / pole sign', low: 15000, high: 80000 },
   { match: /monument/i, label: 'Monument sign', low: 8000, high: 40000 },
   { match: /channel letter|illuminated|lit sign|light ?box|cabinet sign|neon|blade sign/i, label: 'Illuminated building sign', low: 4000, high: 20000 },
-  { match: /building sign|storefront|exterior sign|facade|outdoor sign|wall sign/i, label: 'Building / exterior sign', low: 2500, high: 12000 },
+  { match: /building sign|storefront|exterior|outdoor|outside sign|facade|wall sign|business sign|new business name|suite sign|tenant sign/i, label: 'Building / exterior sign', low: 1500, high: 7000 },
   { match: /fleet/i, label: 'Fleet graphics', low: 6000, high: 30000 },
   { match: /wayfinding|directory|ada|braille|room sign|interior sign|office sign|lobby/i, label: 'Interior / ADA / wayfinding signs', low: 1500, high: 10000 },
   { match: /full wrap|vehicle wrap|car wrap|truck wrap|van wrap|wrap/i, label: 'Vehicle wrap', low: 2500, high: 6000 },
@@ -74,9 +74,19 @@ export function estimate(i: IntakeInput, s: Pick<RoutingSettings, 'largeMin' | '
   const all = [text, ...(i.qa || []).map(x => x.a)].join(' ')
   const reasons: string[] = []
   const rule = PRODUCTS.find(r => r.match.test(i.product || '')) || PRODUCTS.find(r => r.match.test(text))
-  let low = rule?.low ?? 1000, high = rule?.high ?? 5000
-  reasons.push(rule ? `${rule.label}: usually ${rangeText(rule.low, rule.high)}` : 'Product not clear yet: assumed a mid-size job')
-  if (rule && rule.fit === false) return { size: 'not_a_fit', low: 0, high: 0, product: rule.label, reasons: ['Signarama does not offer this (apparel, promo items or print collateral)'], rush: false }
+  const who0 = [i.company, i.industry, all].filter(Boolean).join(' ')
+  if (!rule) {
+    // No idea what they want (e.g. a website visitor): do not invent a number. Only flag clearly big accounts.
+    const big = (i.employees || 0) >= 200 || BIG_BUYER.test(who0)
+    return { size: big ? 'large' : 'unknown', low: 0, high: 0, product: null, rush: false,
+      reasons: big ? [(i.employees || 0) >= 200 ? `Larger company (about ${i.employees} employees): worth a senior call` : 'Type of customer that buys bigger or repeat jobs'] : ['Not enough information to size yet'] }
+  }
+  let low = rule.low, high = rule.high
+  reasons.push(`${rule.label}: usually ${rangeText(rule.low, rule.high)}`)
+  if (rule.fit !== false && /\b(small|tiny|little|simple|single|just one|one small)\b|\b\d{1,2}(?:"|”|''| ?inch)/i.test(text)) {
+    high = Math.max(low * 2, Math.round(high * 0.4)); reasons.push('Described as small or simple')
+  }
+  if (rule.fit === false) return { size: 'not_a_fit', low: 0, high: 0, product: rule.label, reasons: ['Signarama does not offer this (apparel, promo items or print collateral)'], rush: false }
 
   const locAns = (i.qa || []).find(x => /locations|vehicles/i.test(x.q))?.a || ''
   // Only count numbers attached to locations or vehicles ("4 vans", "two stores"), not "6 stickers".
@@ -100,7 +110,7 @@ export function estimate(i: IntakeInput, s: Pick<RoutingSettings, 'largeMin' | '
   if (bump && size !== 'large') size = size === 'small' ? 'medium' : 'large'
   const rush = /asap|urgent|rush|this (monday|tuesday|wednesday|thursday|friday|weekend|week)|tomorrow|by (monday|friday)|before (sunday|the weekend)/i.test(all)
   if (rush) reasons.push('Tight deadline: call today')
-  return { size, low: Math.round(low), high: Math.round(high), product: rule?.label || null, reasons, rush }
+  return { size, low: Math.round(low), high: Math.round(high), product: rule.label, reasons, rush }
 }
 
 export type DecisionMaker = { value: 'yes' | 'likely' | 'no' | 'unknown'; why: string }
@@ -119,8 +129,8 @@ export function decisionMaker(title: string | null | undefined, qa?: { q: string
   return { value: 'unknown', why: 'Not known yet: ask "Who else is involved in the decision?"' }
 }
 
-export const SIZE_LABEL: Record<Size, string> = { large: 'Large', medium: 'Medium', small: 'Small', not_a_fit: 'Not a fit' }
-export const SIZE_COLOR: Record<Size, string> = { large: '#F59E0B', medium: '#3B82F6', small: '#64748B', not_a_fit: '#EF4444' }
+export const SIZE_LABEL: Record<Size, string> = { large: 'Large', medium: 'Medium', small: 'Small', not_a_fit: 'Not a fit', unknown: 'Size unknown' }
+export const SIZE_COLOR: Record<Size, string> = { large: '#F59E0B', medium: '#3B82F6', small: '#64748B', not_a_fit: '#EF4444', unknown: '#64748B' }
 export const DM_LABEL: Record<DecisionMaker['value'], string> = { yes: 'Decision maker', likely: 'Likely decides', no: 'Needs approval', unknown: 'Decision maker?' }
 
 /** Read the sizing tags the intake step writes. */
@@ -133,6 +143,7 @@ export function sizeOf(tags: string[] | null | undefined) {
 }
 
 export function routeFor(size: Size | null, r: RoutingSettings) {
+  if (!size || size === 'unknown') return null
   if (size === 'large') return r.large
   if (size === 'small' || size === 'not_a_fit') return r.small
   return r.medium

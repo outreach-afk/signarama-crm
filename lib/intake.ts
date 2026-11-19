@@ -77,7 +77,7 @@ const one = (v: string | null | undefined) => (v || '').replace(/\s+/g, ' ').tri
 function brief(i: IntakePayload, est: ReturnType<typeof estimate>, dm: ReturnType<typeof decisionMaker>) {
   const out: string[] = ['Intake brief']
   if (i.product || i.inquiry) out.push(`What they want: ${[one(i.product), one(i.inquiry)].filter(Boolean).join(' — ')}`)
-  out.push(est.size === 'not_a_fit' ? 'Size: Not a fit — ' + est.reasons[0] : `Size: ${SIZE_LABEL[est.size]} · about ${rangeText(est.low, est.high)}`)
+  out.push(est.size === 'not_a_fit' ? 'Size: Not a fit — ' + est.reasons[0] : est.high ? `Size: ${SIZE_LABEL[est.size]} · about ${rangeText(est.low, est.high)}` : `Size: ${SIZE_LABEL[est.size]}`)
   out.push(`Why: ${est.reasons.join('; ')}`)
   out.push(`${DM_LABEL[dm.value]}: ${dm.why}`)
   if (i.address || i.zip) out.push(`Job address: ${[i.address, i.zip].filter(Boolean).join(', ')}`)
@@ -118,7 +118,7 @@ export async function processArrivals(db: Db, fresh: string[], intakes: Map<stri
         // Big jobs go straight to the large-job owner, small ones stay with the small-job owner.
         // Medium jobs keep the normal opener → closer handoff.
         const patch: Row = {}
-        if (suggested && est.size !== 'medium' && suggested !== lead.assigned_to) patch.assigned_to = suggested
+        if (suggested && (est.size === 'large' || est.size === 'small' || est.size === 'not_a_fit') && suggested !== lead.assigned_to) patch.assigned_to = suggested
         const owner = patch.assigned_to ?? lead.assigned_to
         const tags = [...(lead.tags || [])]
         if ((est.size === 'small' || est.size === 'not_a_fit') && owner === settings.team.opener) tags.push('route:keep')
