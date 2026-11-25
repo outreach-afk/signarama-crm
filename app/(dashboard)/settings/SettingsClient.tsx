@@ -275,6 +275,11 @@ function TeamAccess() {
     setMsg('✓ Saved'); qc.invalidateQueries({ queryKey: ['team'] })
   }
   const waiting = team.everyone.filter(p => p.role === 'pending')
+  const { data: reqs } = useQuery({
+    queryKey: ['access-requests', waiting.map(p => p.id).join(',')],
+    enabled: team.isOwner && waiting.length > 0,
+    queryFn: async () => (await (await fetch('/api/team/requests')).json()).reasons as Record<string, { reason: string; at: string | null }>,
+  })
   const rest = team.everyone.filter(p => p.role !== 'pending')
   const btn = (bg: string, fg = '#fff'): React.CSSProperties => ({ padding: '6px 11px', background: bg, border: 'none', borderRadius: 7, color: fg, fontWeight: 600, fontSize: 12, cursor: 'pointer' })
   return (
@@ -289,7 +294,13 @@ function TeamAccess() {
           <div style={{ padding: '8px 14px', background: 'rgba(245,158,11,0.10)', color: '#F59E0B', fontWeight: 600, fontSize: 12.5 }}>Waiting for approval ({waiting.length})</div>
           {waiting.map(p => (
             <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
-              <span style={{ flex: 1, minWidth: 180, color: 'var(--text)' }}>{p.full_name || p.email} <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.email}</span></span>
+              <span style={{ flex: 1, minWidth: 180, color: 'var(--text)' }}>{p.full_name || p.email} <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.email}</span>
+                {team.isOwner && (
+                  <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 3, whiteSpace: 'pre-wrap' }}>
+                    {reqs?.[p.id]?.reason ? <>“{reqs[p.id].reason}”</> : <i>No reason given</i>}
+                  </span>
+                )}
+              </span>
               {team.isOwner ? (<>
                 <button disabled={busy === p.id} onClick={() => setRole(p.id, 'viewer')} style={btn('#3B82F6')}>Approve · view only</button>
                 <button disabled={busy === p.id} onClick={() => setRole(p.id, 'bdr')} style={btn('var(--surface-2)', 'var(--text)')}>Approve · can edit</button>

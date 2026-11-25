@@ -6,19 +6,20 @@ import { createClient } from '@/lib/supabase/client'
 
 export default function RegisterClient() {
   const router = useRouter()
-  const [form, setForm] = useState({ email: '', password: '', full_name: '' })
+  const [form, setForm] = useState({ email: '', password: '', full_name: '', reason: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
+    if (form.reason.trim().length < 10) { setError('Please tell Orlando a little about why you need access.'); return }
     setLoading(true)
     setError('')
     const supabase = createClient()
     const { error } = await supabase.auth.signUp({
       email: form.email,
       password: form.password,
-      options: { data: { full_name: form.full_name } },
+      options: { data: { full_name: form.full_name, access_reason: form.reason.trim().slice(0, 1000) } },
     })
     if (error) { setError(error.message); setLoading(false) }
     else router.push('/pending')
@@ -54,12 +55,21 @@ export default function RegisterClient() {
           {field('full_name', 'Full Name', 'text', 'Jane Smith')}
           {field('email', 'Email', 'email', 'you@signarama-corona.com')}
           {field('password', 'Password', 'password', '••••••••')}
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Why do you need access?
+            </label>
+            <textarea value={form.reason} required rows={3} maxLength={1000}
+              placeholder="Who you are and what you need to see, e.g. I'm the new SDR and need to review the pipeline."
+              onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
+              style={{ width: '100%', padding: '10px 12px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', fontSize: 14, outline: 'none', resize: 'vertical', fontFamily: 'inherit' }} />
+          </div>
 
           {error && <p style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171', padding: '8px 12px', borderRadius: 8, fontSize: 13 }}>{error}</p>}
 
           <button type="submit" disabled={loading}
             style={{ marginTop: 4, padding: 11, background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: loading ? 'not-allowed' : 'pointer' }}>
-            {loading ? 'Creating account…' : 'Create account'}
+            {loading ? 'Sending request…' : 'Request access'}
           </button>
         </form>
 

@@ -16,11 +16,12 @@ export async function POST() {
   const key = `access_requested:${user.id}`
   const { data: done } = await db.from('private_settings').select('key').eq('key', key).maybeSingle()
   if (done) return NextResponse.json({ ok: true, status: 'pending', notified: 'earlier' })
-  await db.from('private_settings').insert([{ key, value: new Date().toISOString() }])
+  const reason = String(user.user_metadata?.access_reason || '').trim()
+  await db.from('private_settings').insert([{ key, value: JSON.stringify({ at: new Date().toISOString(), reason }) }])
 
   const owner = (await db.from('profiles').select('email').eq('role', 'owner').limit(1).maybeSingle()).data?.email || process.env.GMAIL_FROM!
   const who = [me.full_name, me.email].filter(Boolean).join(' · ')
-  const text = `${who} signed up for the Signarama CRM and is waiting for your approval.\n\nThey can see nothing until you approve them.\nApprove or deny: https://signarama-crm.vercel.app/settings#team-access`
+  const text = `${who} signed up for the Signarama CRM and is waiting for your approval.\n\nWhy they want access:\n${reason || '(no reason given)'}\n\nThey can see nothing until you approve them.\nApprove or deny: https://signarama-crm.vercel.app/settings#team-access`
   const t = await accessToken()
   if (t.ok && t.token) {
     const from = process.env.GMAIL_FROM!
