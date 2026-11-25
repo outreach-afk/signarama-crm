@@ -259,6 +259,8 @@ function TeamSettingsForm() {
   )
 }
 
+const ROLE_LABEL: Record<string, string> = { owner: 'Owner', manager: 'Can edit', bdr: 'Can edit', viewer: 'View only', pending: 'Waiting', denied: 'Blocked' }
+
 function TeamAccess() {
   const team = useTeam()
   const qc = useQueryClient()
@@ -272,23 +274,43 @@ function TeamAccess() {
     if (!r.ok) { setMsg(`✗ ${d.error || 'Could not change access'}`); return }
     setMsg('✓ Saved'); qc.invalidateQueries({ queryKey: ['team'] })
   }
+  const waiting = team.everyone.filter(p => p.role === 'pending')
+  const rest = team.everyone.filter(p => p.role !== 'pending')
+  const btn = (bg: string, fg = '#fff'): React.CSSProperties => ({ padding: '6px 11px', background: bg, border: 'none', borderRadius: 7, color: fg, fontWeight: 600, fontSize: 12, cursor: 'pointer' })
   return (
-    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+    <div id="team-access" style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
       <p style={{ marginBottom: 12 }}>
-        To share the CRM read-only, send the person this link: <b style={{ color: 'var(--text)' }}>https://signarama-crm.vercel.app/register</b>.
-        Everyone who signs up starts as <b style={{ color: 'var(--text)' }}>View only</b>: they can see all leads, the pipeline and reports, but cannot change, send or delete anything.
-        Switch someone to <b style={{ color: 'var(--text)' }}>Can edit</b> here only if they work leads.
+        Anyone can request access at <b style={{ color: 'var(--text)' }}>https://signarama-crm.vercel.app/register</b>, but they see nothing until
+        {team.isOwner ? ' you approve them' : ' Orlando (owner) approves them'}. You get an email for each request. Approve as <b style={{ color: 'var(--text)' }}>View only</b> unless they work leads.
+        Only the owner can approve, block or change access, so nobody else can let people in.
       </p>
+      {waiting.length > 0 && (
+        <div style={{ border: '1px solid rgba(245,158,11,0.45)', borderRadius: 8, overflow: 'hidden', maxWidth: 640, marginBottom: 14 }}>
+          <div style={{ padding: '8px 14px', background: 'rgba(245,158,11,0.10)', color: '#F59E0B', fontWeight: 600, fontSize: 12.5 }}>Waiting for approval ({waiting.length})</div>
+          {waiting.map(p => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
+              <span style={{ flex: 1, minWidth: 180, color: 'var(--text)' }}>{p.full_name || p.email} <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.email}</span></span>
+              {team.isOwner ? (<>
+                <button disabled={busy === p.id} onClick={() => setRole(p.id, 'viewer')} style={btn('#3B82F6')}>Approve · view only</button>
+                <button disabled={busy === p.id} onClick={() => setRole(p.id, 'bdr')} style={btn('var(--surface-2)', 'var(--text)')}>Approve · can edit</button>
+                <button disabled={busy === p.id} onClick={() => setRole(p.id, 'denied')} style={btn('rgba(239,68,68,0.15)', '#F87171')}>Deny</button>
+              </>) : <span style={{ fontSize: 12 }}>Waiting for Orlando</span>}
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', maxWidth: 640 }}>
-        {team.everyone.map(p => (
+        {rest.map(p => (
           <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
             <span style={{ flex: 1, color: 'var(--text)' }}>{team.name(p.id)} <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.email}{p.id === team.me ? ' (you)' : ''}</span></span>
-            <select value={p.role === 'viewer' ? 'viewer' : 'edit'} disabled={busy === p.id || p.id === team.me}
-              onChange={e => setRole(p.id, e.target.value === 'viewer' ? 'viewer' : 'bdr')}
-              style={{ padding: '6px 8px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 12.5, outline: 'none' }}>
-              <option value="edit">Can edit</option>
-              <option value="viewer">View only</option>
-            </select>
+            {team.isOwner && p.role !== 'owner' ? (
+              <select value={p.role === 'viewer' || p.role === 'denied' ? p.role : 'bdr'} disabled={busy === p.id} onChange={e => setRole(p.id, e.target.value)}
+                style={{ padding: '6px 8px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 12.5, outline: 'none' }}>
+                <option value="bdr">Can edit</option>
+                <option value="viewer">View only</option>
+                <option value="denied">Blocked</option>
+              </select>
+            ) : <span style={{ fontSize: 12.5 }}>{ROLE_LABEL[p.role] || p.role}</span>}
           </div>
         ))}
       </div>

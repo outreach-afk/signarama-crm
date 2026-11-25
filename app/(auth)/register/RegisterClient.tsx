@@ -21,7 +21,7 @@ export default function RegisterClient() {
       options: { data: { full_name: form.full_name } },
     })
     if (error) { setError(error.message); setLoading(false) }
-    else router.push('/dashboard')
+    else router.push('/pending')
   }
 
   const field = (key: keyof typeof form, label: string, type = 'text', placeholder = '') => (
@@ -47,7 +47,7 @@ export default function RegisterClient() {
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <div style={{ width: 48, height: 48, borderRadius: 12, background: 'var(--primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, marginBottom: 12 }}>🏷️</div>
           <h1 style={{ fontFamily: 'Bricolage Grotesque, sans-serif', fontSize: 22, fontWeight: 700 }}>Join the team</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>Create your CRM account</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>Request access to the Signarama Corona CRM. Orlando approves every account.</p>
         </div>
 
         <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>

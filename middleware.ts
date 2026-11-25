@@ -38,10 +38,21 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // View-only users: any request that changes something is refused (the database refuses it too).
-  if (user && path.startsWith('/api/') && request.method !== 'GET' && !path.startsWith('/api/auth')) {
+  // Approval gate. pending / denied accounts see only the waiting page; viewers cannot change anything.
+  if (user && !isAuthPage) {
     const { data: me } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
-    if (!me || me.role === 'viewer') return NextResponse.json({ error: 'You have view-only access to this CRM.' }, { status: 403 })
+    const role = me?.role || 'pending'
+    const waiting = role === 'pending' || role === 'denied'
+    if (waiting) {
+      if (path === '/api/access/request') return supabaseResponse
+      if (path.startsWith('/api/')) return NextResponse.json({ error: 'Your account is waiting for approval.' }, { status: 403 })
+      if (path !== '/pending') { const url = request.nextUrl.clone(); url.pathname = '/pending'; url.search = ''; return NextResponse.redirect(url) }
+      return supabaseResponse
+    }
+    if (path === '/pending') { const url = request.nextUrl.clone(); url.pathname = '/today'; return NextResponse.redirect(url) }
+    if (role === 'viewer' && path.startsWith('/api/') && request.method !== 'GET' && !path.startsWith('/api/auth')) {
+      return NextResponse.json({ error: 'You have view-only access to this CRM.' }, { status: 403 })
+    }
   }
 
   if (user && isAuthPage) {

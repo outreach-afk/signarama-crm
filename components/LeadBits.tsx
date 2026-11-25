@@ -212,13 +212,14 @@ export function useTeam() {
   })
   const everyone = data?.profiles || []
   const byId = new Map(everyone.map(p => [p.id, p]))
-  const profiles = everyone.filter(p => p.role !== 'viewer') // people who can own leads
+  const profiles = everyone.filter(p => ['owner', 'manager', 'bdr'].includes(p.role)) // people who can own leads
   const settings = data?.settings || DEFAULT_TEAM
   const meRole = data?.me ? byId.get(data.me)?.role : undefined
   return {
     profiles, everyone, settings, me: data?.me || null, byId,
     /** True only once we know this person is view-only (never flashes for editors). */
     viewOnly: meRole === 'viewer',
+    isOwner: meRole === 'owner',
     name: (id: string | null | undefined) => (id ? displayName(byId.get(id)) : 'Unassigned'),
     ready: !!(settings.opener && settings.closer),
   }
