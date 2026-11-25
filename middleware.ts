@@ -38,6 +38,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
+  // View-only users: any request that changes something is refused (the database refuses it too).
+  if (user && path.startsWith('/api/') && request.method !== 'GET' && !path.startsWith('/api/auth')) {
+    const { data: me } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
+    if (!me || me.role === 'viewer') return NextResponse.json({ error: 'You have view-only access to this CRM.' }, { status: 403 })
+  }
+
   if (user && isAuthPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'

@@ -9,7 +9,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
-type Item = { href: string; label: string; icon: LucideIcon; count?: keyof Counts; child?: boolean; section?: string }
+type Item = { href: string; label: string; icon: LucideIcon; count?: keyof Counts; child?: boolean; section?: string; editOnly?: boolean }
 type Counts = { web_pixel: number; inquiry: number; apollo: number; warm: number; handoffs: number }
 
 const NAV: Item[] = [
@@ -24,7 +24,7 @@ const NAV: Item[] = [
   { href: '/leads?view=apollo', label: 'Apollo Leads', icon: Send, count: 'apollo' },
   { href: '/leads', label: 'All Leads', icon: Users },
   { href: '/reports', label: 'Reports', icon: BarChart3, section: 'Workspace' },
-  { href: '/settings', label: 'Settings', icon: Settings },
+  { href: '/settings', label: 'Settings', icon: Settings, editOnly: true },
 ]
 
 export default function DashboardNav() {
@@ -94,13 +94,13 @@ export default function DashboardNav() {
       </div>
 
       <nav style={{ flex: 1, padding: '0 10px 12px', display: 'flex', flexDirection: 'column', gap: 1, overflowY: 'auto' }}>
-        {NAV.map(({ href, label, icon: Icon, count, child, section }) => {
+        {NAV.map(({ href, label, icon: Icon, count, child, section, editOnly }) => {
           const active = isActive(href)
           const n = count ? counts[count] : undefined
           return (
             <div key={href}>
               {section && <div className="nav-section">{section}</div>}
-              <Link href={href} className={`nav-item${active ? ' active' : ''}${child ? ' child' : ''}`}>
+              <Link href={href} className={`nav-item${active ? ' active' : ''}${child ? ' child' : ''}${editOnly ? ' edit-only' : ''}`}>
                 <Icon size={child ? 14 : 16} strokeWidth={active ? 2.2 : 1.8} />
                 <span style={{ flex: 1 }}>{label}</span>
                 {n !== undefined && (count !== 'handoffs' || n > 0) && <span className={`nav-count${count === 'handoffs' ? ' alert' : ''}`} title={count === 'handoffs' ? 'Leads handed to you' : undefined}>{n.toLocaleString()}</span>}

@@ -210,11 +210,15 @@ export function useTeam() {
       }
     },
   })
-  const profiles = data?.profiles || []
-  const byId = new Map(profiles.map(p => [p.id, p]))
+  const everyone = data?.profiles || []
+  const byId = new Map(everyone.map(p => [p.id, p]))
+  const profiles = everyone.filter(p => p.role !== 'viewer') // people who can own leads
   const settings = data?.settings || DEFAULT_TEAM
+  const meRole = data?.me ? byId.get(data.me)?.role : undefined
   return {
-    profiles, settings, me: data?.me || null, byId,
+    profiles, everyone, settings, me: data?.me || null, byId,
+    /** True only once we know this person is view-only (never flashes for editors). */
+    viewOnly: meRole === 'viewer',
     name: (id: string | null | undefined) => (id ? displayName(byId.get(id)) : 'Unassigned'),
     ready: !!(settings.opener && settings.closer),
   }

@@ -129,6 +129,7 @@ export default function TodayClient() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
+            <span className="edit-only" style={{ display: 'contents' }}>
             {l.phone && <a href={`tel:${l.phone}`} onClick={() => setCalling(l.id)} style={btn('#10B981')}><Phone size={12} /> Call</a>}
             <LogTouch compact onLog={(type, outcome) => logTouch(l, type, outcome)} />
             {canHandOff(l) && (
@@ -145,6 +146,7 @@ export default function TodayClient() {
               <option value="unqualified">Unqualified…</option>
               <option value="lost">Lost…</option>
             </select>
+            </span>
             <Link href={`/leads/${l.id}`} style={btn('#3B82F6')}><ExternalLink size={12} /> Open</Link>
           </div>
         </div>

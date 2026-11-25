@@ -17,6 +17,27 @@ export async function POST(req: NextRequest) {
     const dry = req.nextUrl.searchParams.get('dry') === '1'
     const roles = (await c.query(`select email, role from public.profiles order by created_at`)).rows
     if (dry) return NextResponse.json({ ok: true, dry, roles })
+    if (req.nextUrl.searchParams.get('verify') === '1') {
+      // Simulate an editor and a viewer inside a transaction that is always rolled back.
+      const out: Record<string, unknown> = {}
+      const editor = (await c.query(`select id from public.profiles where email = 'outreach@signarama-corona.com'`)).rows[0].id
+      const lead = (await c.query(`select id, notes from public.leads order by created_at desc limit 1`)).rows[0]
+      for (const [who, sub] of [['editor', editor], ['viewer', '00000000-0000-0000-0000-000000000001']] as const) {
+        await c.query('begin')
+        try {
+          await c.query(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ sub, role: 'authenticated' })])
+          await c.query('set local role authenticated')
+          const ce = (await c.query('select public.can_edit() ce')).rows[0].ce
+          const read = (await c.query('select count(*)::int n from public.leads')).rows[0].n
+          const upd = await c.query(`update public.leads set notes = notes where id = $1`, [lead.id])
+          let settingsWrite = 'ok'
+          try { await c.query(`update public.app_settings set updated_at = updated_at where key = 'lead_routing'`) } catch (e) { settingsWrite = (e as Error).message }
+          out[who] = { canEdit: ce, leadsVisible: read, leadRowsUpdated: upd.rowCount, settingsWrite }
+        } catch (e) { out[who] = { error: (e as Error).message } }
+        await c.query('rollback')
+      }
+      return NextResponse.json({ ok: true, verify: out })
+    }
     await c.query('begin'); await c.query(SQL); await c.query('commit')
     const policies = (await c.query(`select tablename, policyname, cmd from pg_policies where schemaname='public' and tablename in ('leads','activities','ai_drafts','app_settings') order by 1,2`)).rows
     return NextResponse.json({ ok: true, roles, policies })

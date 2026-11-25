@@ -2,6 +2,7 @@ import { Suspense } from 'react'
 import DashboardNav from '@/components/DashboardNav'
 import CommandPalette from '@/components/CommandPalette'
 import LeadDialogs from '@/components/LeadDialogs'
+import ViewOnlyBanner from '@/components/ViewOnly'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -14,6 +15,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Main */}
       <main style={{ flex: 1, marginLeft: 232, minHeight: '100vh', overflow: 'auto' }}>
+        <ViewOnlyBanner />
         {children}
       </main>
       <CommandPalette />

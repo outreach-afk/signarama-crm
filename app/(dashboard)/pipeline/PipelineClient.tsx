@@ -76,7 +76,7 @@ export default function PipelineClient() {
               </div>
               <div style={{ padding: 8, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '68vh', overflowY: 'auto', minHeight: 60 }}>
                 {items.slice(0, 60).map(l => (
-                  <div key={l.id} draggable onDragStart={() => setDragId(l.id)} onDragEnd={() => { setDragId(null); setOver(null) }}
+                  <div key={l.id} draggable={!team.viewOnly} onDragStart={() => setDragId(l.id)} onDragEnd={() => { setDragId(null); setOver(null) }}
                     style={{
                       background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '10px 11px',
                       cursor: 'grab', opacity: dragId === l.id ? 0.4 : 1,

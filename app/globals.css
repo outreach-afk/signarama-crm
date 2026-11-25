@@ -115,3 +115,6 @@ main > div { animation: page-in .22s ease both; }
 .icon-btn:hover { background: rgba(255,255,255,0.06); border-color: var(--border); color: var(--text); }
 .palette { width: 620px; max-width: 92vw; border-radius: 16px; overflow: hidden; background: #141925; border: 1px solid var(--border-strong); box-shadow: var(--shadow-raised); animation: page-in .14s ease both; }
 .nav-count.alert { background: #F59E0B; color: #1A1206; }
+
+/* View-only users (profiles.role = 'viewer'): controls that change data are hidden. The database refuses the writes as well. */
+body[data-viewonly='1'] .edit-only { display: none !important; }

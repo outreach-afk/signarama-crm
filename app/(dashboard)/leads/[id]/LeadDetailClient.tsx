@@ -268,7 +268,7 @@ export default function LeadDetailClient() {
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>· added {new Date(lead.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="edit-only" style={{ display: 'flex', gap: 8 }}>
             {editing ? (
               <>
                 <button onClick={() => setEditing(false)} style={{ padding: '8px 14px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
@@ -294,7 +294,7 @@ export default function LeadDetailClient() {
       </div>
 
       {/* Action Bar */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 28 }}>
+      <div className="edit-only" style={{ display: 'flex', gap: 10, marginBottom: 28 }}>
         {[
           { icon: '✉️', label: 'Email', color: '#3B82F6', action: () => openModal('email'), off: false },
           { icon: '📞', label: 'Call', color: '#10B981', action: () => { if (lead.phone) window.location.href = `tel:${lead.phone}` }, off: !lead.phone && 'No phone number on this lead' },
@@ -323,7 +323,7 @@ export default function LeadDetailClient() {
               <h3 style={{ fontFamily: 'Bricolage Grotesque, sans-serif', fontSize: 15, fontWeight: 700 }}>Before you call</h3>
               <SizePills lead={lead} team={team} routing={routing} showOwner={false} />
               {best && best !== lead.assigned_to && (
-                <button onClick={async () => { await supabase.from('leads').update({ assigned_to: best } as never).eq('id', id); qc.invalidateQueries({ queryKey: ['lead', id] }); qc.invalidateQueries({ queryKey: ['leads'] }) }}
+                <button className="edit-only" onClick={async () => { await supabase.from('leads').update({ assigned_to: best } as never).eq('id', id); qc.invalidateQueries({ queryKey: ['lead', id] }); qc.invalidateQueries({ queryKey: ['leads'] }) }}
                   title="Suggested owner for a job this size (Settings → Lead routing)"
                   style={{ marginLeft: 'auto', padding: '6px 12px', background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.4)', borderRadius: 8, color: '#C4B5FD', cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }}>
                   Give to {team.name(best)}
@@ -399,7 +399,7 @@ export default function LeadDetailClient() {
             })}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+        <div className="edit-only" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginRight: 6 }}>
             <OwnerChip id={lead.assigned_to} team={team} />
             <select value={lead.assigned_to || ''} title="Who owns this lead"

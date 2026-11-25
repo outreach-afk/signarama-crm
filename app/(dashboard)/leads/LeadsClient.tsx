@@ -194,7 +194,7 @@ export default function LeadsClient() {
           <h1 style={{ fontFamily: 'Bricolage Grotesque, sans-serif', fontSize: 26, fontWeight: 700, marginBottom: 4 }}>{cfg.title}</h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: 14, maxWidth: 640 }}>{cfg.blurb}</p>
         </div>
-        <button onClick={() => setShowModal(true)}
+        <button className="edit-only" onClick={() => setShowModal(true)}
           style={{ padding: '10px 20px', background: 'var(--primary)', border: 'none', borderRadius: 8, color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer', flexShrink: 0 }}>
           + Add Lead
         </button>
@@ -315,7 +315,7 @@ export default function LeadsClient() {
                     </div>
                   </td>
                   <td style={{ padding: '12px 16px' }} onClick={e => e.stopPropagation()}>
-                    <select value={lead.stage} onChange={e => setStage(lead, e.target.value as Stage)} title="Change stage"
+                    <select disabled={team.viewOnly} value={lead.stage} onChange={e => setStage(lead, e.target.value as Stage)} title="Change stage"
                       style={{
                         fontSize: 10, fontWeight: 700, padding: '3px 6px', borderRadius: 99, cursor: 'pointer', outline: 'none',
                         background: `${STAGE_COLOR[lead.stage]}20`, color: STAGE_COLOR[lead.stage],

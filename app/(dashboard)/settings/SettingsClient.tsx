@@ -22,6 +22,7 @@ const StatusDot = ({ ok }: { ok?: boolean }) => (
 )
 
 export default function SettingsClient() {
+  const { viewOnly } = useTeam()
   const [syncing, setSyncing] = useState<string | null>(null)
   const [syncMsg, setSyncMsg] = useState<Record<string, string>>({})
 
@@ -60,6 +61,13 @@ export default function SettingsClient() {
     { label: 'Slack', keys: ['SLACK_BOT_TOKEN'] },
   ]
 
+  if (viewOnly) return (
+    <div style={{ padding: '32px', maxWidth: 720 }}>
+      <h1 style={{ fontFamily: 'Bricolage Grotesque, sans-serif', fontSize: 26, fontWeight: 700, marginBottom: 8 }}>Settings</h1>
+      <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>You have view-only access, so settings are not available. Ask Orlando if you need to edit.</p>
+    </div>
+  )
+
   return (
     <div style={{ padding: '32px', maxWidth: 720 }}>
       <div style={{ marginBottom: 28 }}>
@@ -97,6 +105,10 @@ export default function SettingsClient() {
 
       <Section title="Follow-up team">
         <TeamSettingsForm />
+      </Section>
+
+      <Section title="Team access">
+        <TeamAccess />
       </Section>
 
       <Section title="Email signature">
@@ -243,6 +255,44 @@ function TeamSettingsForm() {
         {msg && <span style={{ fontSize: 12, color: msg.startsWith('✗') ? 'var(--danger)' : 'var(--success)' }}>{msg}</span>}
       </div>
       <p style={{ fontSize: 12, marginTop: 10 }}>Only people who have created an account appear in these lists. A new team member signs up at /register first.</p>
+    </div>
+  )
+}
+
+function TeamAccess() {
+  const team = useTeam()
+  const qc = useQueryClient()
+  const [busy, setBusy] = useState<string | null>(null)
+  const [msg, setMsg] = useState('')
+  async function setRole(id: string, role: string) {
+    setBusy(id); setMsg('')
+    const r = await fetch('/api/team/role', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, role }) })
+    const d = await r.json().catch(() => ({}))
+    setBusy(null)
+    if (!r.ok) { setMsg(`✗ ${d.error || 'Could not change access'}`); return }
+    setMsg('✓ Saved'); qc.invalidateQueries({ queryKey: ['team'] })
+  }
+  return (
+    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+      <p style={{ marginBottom: 12 }}>
+        To share the CRM read-only, send the person this link: <b style={{ color: 'var(--text)' }}>https://signarama-crm.vercel.app/register</b>.
+        Everyone who signs up starts as <b style={{ color: 'var(--text)' }}>View only</b>: they can see all leads, the pipeline and reports, but cannot change, send or delete anything.
+        Switch someone to <b style={{ color: 'var(--text)' }}>Can edit</b> here only if they work leads.
+      </p>
+      <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', maxWidth: 640 }}>
+        {team.everyone.map(p => (
+          <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+            <span style={{ flex: 1, color: 'var(--text)' }}>{team.name(p.id)} <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.email}{p.id === team.me ? ' (you)' : ''}</span></span>
+            <select value={p.role === 'viewer' ? 'viewer' : 'edit'} disabled={busy === p.id || p.id === team.me}
+              onChange={e => setRole(p.id, e.target.value === 'viewer' ? 'viewer' : 'bdr')}
+              style={{ padding: '6px 8px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 12.5, outline: 'none' }}>
+              <option value="edit">Can edit</option>
+              <option value="viewer">View only</option>
+            </select>
+          </div>
+        ))}
+      </div>
+      {msg && <div style={{ fontSize: 12, marginTop: 8, color: msg.startsWith('✗') ? 'var(--danger)' : 'var(--success)' }}>{msg}</div>}
     </div>
   )
 }
